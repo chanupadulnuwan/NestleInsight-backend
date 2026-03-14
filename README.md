@@ -3,7 +3,7 @@
 Central backend system powering mobile and admin applications.
 
 ## Tech Stack
-- ASP.NET Core Web API
+- Nest.js
 - PostgreSQL
 - Entity Framework Core
 - JWT Authentication
