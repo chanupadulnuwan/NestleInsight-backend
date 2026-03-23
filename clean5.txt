@@ -1,0 +1,16 @@
+[Nest] 10972  - 03/19/2026, 8:41:39 PM     LOG [NestFactory] Starting Nest application...
+[Nest] 10972  - 03/19/2026, 8:41:39 PM     LOG [InstanceLoader] AppModule dependencies initialized +10ms
+[Nest] 10972  - 03/19/2026, 8:41:39 PM     LOG [InstanceLoader] TypeOrmModule dependencies initialized +0ms
+[Nest] 10972  - 03/19/2026, 8:41:39 PM     LOG [InstanceLoader] ConfigHostModule dependencies initialized +0ms
+[Nest] 10972  - 03/19/2026, 8:41:39 PM     LOG [InstanceLoader] ConfigModule dependencies initialized +1ms
+[Nest] 10972  - 03/19/2026, 8:41:39 PM     LOG [InstanceLoader] ConfigModule dependencies initialized +0ms
+[Nest] 10972  - 03/19/2026, 8:41:39 PM     LOG [InstanceLoader] TypeOrmCoreModule dependencies initialized +159ms
+[Nest] 10972  - 03/19/2026, 8:41:39 PM     LOG [InstanceLoader] TypeOrmModule dependencies initialized +0ms
+[Nest] 10972  - 03/19/2026, 8:41:39 PM     LOG [InstanceLoader] UsersModule dependencies initialized +1ms
+[Nest] 10972  - 03/19/2026, 8:41:39 PM     LOG [InstanceLoader] AuthModule dependencies initialized +0ms
+[Nest] 10972  - 03/19/2026, 8:41:39 PM     LOG [RoutesResolver] AuthController {/auth}: +4ms
+[Nest] 10972  - 03/19/2026, 8:41:39 PM     LOG [RouterExplorer] Mapped {/auth/register, POST} route +2ms
+[Nest] 10972  - 03/19/2026, 8:41:39 PM     LOG [RoutesResolver] UsersController {/users}: +0ms
+[Nest] 10972  - 03/19/2026, 8:41:39 PM     LOG [NestApplication] Nest application successfully started +2ms
+(node:10972) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)

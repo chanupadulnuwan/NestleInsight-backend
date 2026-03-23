@@ -1,0 +1,41 @@
+[Nest] 37420  - 03/19/2026, 9:33:48 PM     LOG [NestFactory] Starting Nest application...
+[Nest] 37420  - 03/19/2026, 9:33:48 PM     LOG [InstanceLoader] AppModule dependencies initialized +11ms
+[Nest] 37420  - 03/19/2026, 9:33:48 PM     LOG [InstanceLoader] TypeOrmModule dependencies initialized +0ms
+[Nest] 37420  - 03/19/2026, 9:33:48 PM     LOG [InstanceLoader] ConfigHostModule dependencies initialized +0ms
+[Nest] 37420  - 03/19/2026, 9:33:48 PM     LOG [InstanceLoader] ConfigModule dependencies initialized +1ms
+[Nest] 37420  - 03/19/2026, 9:33:48 PM     LOG [InstanceLoader] ConfigModule dependencies initialized +0ms
+[Nest] 37420  - 03/19/2026, 9:33:48 PM     LOG [InstanceLoader] JwtModule dependencies initialized +38ms
+[Nest] 37420  - 03/19/2026, 9:33:48 PM     LOG [InstanceLoader] TypeOrmCoreModule dependencies initialized +120ms
+[Nest] 37420  - 03/19/2026, 9:33:48 PM     LOG [InstanceLoader] TypeOrmModule dependencies initialized +0ms
+[Nest] 37420  - 03/19/2026, 9:33:48 PM     LOG [InstanceLoader] UsersModule dependencies initialized +0ms
+[Nest] 37420  - 03/19/2026, 9:33:48 PM     LOG [InstanceLoader] AuthModule dependencies initialized +0ms
+[Nest] 37420  - 03/19/2026, 9:33:48 PM     LOG [RoutesResolver] AuthController {/auth}: +4ms
+[Nest] 37420  - 03/19/2026, 9:33:48 PM     LOG [RouterExplorer] Mapped {/auth/register, POST} route +3ms
+[Nest] 37420  - 03/19/2026, 9:33:48 PM     LOG [RouterExplorer] Mapped {/auth/login, POST} route +1ms
+[Nest] 37420  - 03/19/2026, 9:33:48 PM     LOG [RoutesResolver] UsersController {/users}: +0ms
+[Nest] 37420  - 03/19/2026, 9:33:48 PM     LOG [NestApplication] Nest application successfully started +2ms
+(node:37420) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[Nest] 37420  - 03/19/2026, 9:33:48 PM   ERROR [NestApplication] Error: listen EADDRINUSE: address already in use :::3000 +1ms
+node:net:1940
+    const ex = new UVExceptionWithHostPort(err, 'listen', address, port);
+               ^
+
+Error: listen EADDRINUSE: address already in use :::3000
+    at Server.setupListenHandle [as _listen2] (node:net:1940:16)
+    at listenInCluster (node:net:1997:12)
+    at Server.listen (node:net:2102:7)
+    at ExpressAdapter.listen (D:\NestleInsight\backend\node_modules\@nestjs\platform-express\adapters\express-adapter.js:127:32)
+    at D:\NestleInsight\backend\node_modules\@nestjs\core\nest-application.js:188:30
+    at new Promise (<anonymous>)
+    at NestApplication.listen (D:\NestleInsight\backend\node_modules\@nestjs\core\nest-application.js:178:16)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async bootstrap (D:\NestleInsight\backend\dist\main.js:13:5) {
+  code: 'EADDRINUSE',
+  errno: -4091,
+  syscall: 'listen',
+  address: '::',
+  port: 3000
+}
+
+Node.js v24.12.0

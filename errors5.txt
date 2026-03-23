@@ -1,0 +1,3 @@
+﻿src/auth/auth.service.ts(91,7): error TS2353: Object literal may only specify known properties, and 'employeeId' does not exist in type 'Partial<User>'.
+src/users/users.service.ts(26,52): error TS2353: Object literal may only specify known properties, and 'employeeId' does not exist in type 'FindOptionsWhere<User> | FindOptionsWhere<User>[]'.
+src/users/users.service.ts(30,52): error TS2353: Object literal may only specify known properties, and 'nic' does not exist in type 'FindOptionsWhere<User> | FindOptionsWhere<User>[]'.

@@ -1,0 +1,32 @@
+[Nest] 25980  - 03/19/2026, 8:33:58 PM     LOG [NestFactory] Starting Nest application...
+[Nest] 25980  - 03/19/2026, 8:33:58 PM     LOG [InstanceLoader] AppModule dependencies initialized +11ms
+[Nest] 25980  - 03/19/2026, 8:33:58 PM     LOG [InstanceLoader] TypeOrmModule dependencies initialized +0ms
+[Nest] 25980  - 03/19/2026, 8:33:58 PM     LOG [InstanceLoader] ConfigHostModule dependencies initialized +0ms
+[Nest] 25980  - 03/19/2026, 8:33:58 PM     LOG [InstanceLoader] ConfigModule dependencies initialized +0ms
+[Nest] 25980  - 03/19/2026, 8:33:58 PM     LOG [InstanceLoader] ConfigModule dependencies initialized +0ms
+(node:25980) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[Nest] 25980  - 03/19/2026, 8:33:58 PM   ERROR [TypeOrmModule] Unable to connect to the database. Retrying (1)...
+QueryFailedError: column "username" of relation "users" contains null values
+    at PostgresQueryRunner.query (D:\NestleInsight\backend\node_modules\typeorm\driver\postgres\PostgresQueryRunner.js:216:19)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async PostgresQueryRunner.executeQueries (D:\NestleInsight\backend\node_modules\typeorm\query-runner\BaseQueryRunner.js:441:13)
+    at async PostgresQueryRunner.addColumn (D:\NestleInsight\backend\node_modules\typeorm\driver\postgres\PostgresQueryRunner.js:695:9)
+    at async PostgresQueryRunner.addColumns (D:\NestleInsight\backend\node_modules\typeorm\driver\postgres\PostgresQueryRunner.js:704:13)
+    at async RdbmsSchemaBuilder.addNewColumns (D:\NestleInsight\backend\node_modules\typeorm\schema-builder\RdbmsSchemaBuilder.js:570:13)
+    at async RdbmsSchemaBuilder.executeSchemaSyncOperationsInProperOrder (D:\NestleInsight\backend\node_modules\typeorm\schema-builder\RdbmsSchemaBuilder.js:169:9)
+    at async RdbmsSchemaBuilder.build (D:\NestleInsight\backend\node_modules\typeorm\schema-builder\RdbmsSchemaBuilder.js:66:13)
+    at async DataSource.synchronize (D:\NestleInsight\backend\node_modules\typeorm\data-source\DataSource.js:212:9)
+    at async DataSource.initialize (D:\NestleInsight\backend\node_modules\typeorm\data-source\DataSource.js:157:17)
+[Nest] 25980  - 03/19/2026, 8:34:01 PM   ERROR [TypeOrmModule] Unable to connect to the database. Retrying (2)...
+QueryFailedError: column "username" of relation "users" contains null values
+    at PostgresQueryRunner.query (D:\NestleInsight\backend\node_modules\typeorm\driver\postgres\PostgresQueryRunner.js:216:19)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async PostgresQueryRunner.executeQueries (D:\NestleInsight\backend\node_modules\typeorm\query-runner\BaseQueryRunner.js:441:13)
+    at async PostgresQueryRunner.addColumn (D:\NestleInsight\backend\node_modules\typeorm\driver\postgres\PostgresQueryRunner.js:695:9)
+    at async PostgresQueryRunner.addColumns (D:\NestleInsight\backend\node_modules\typeorm\driver\postgres\PostgresQueryRunner.js:704:13)
+    at async RdbmsSchemaBuilder.addNewColumns (D:\NestleInsight\backend\node_modules\typeorm\schema-builder\RdbmsSchemaBuilder.js:570:13)
+    at async RdbmsSchemaBuilder.executeSchemaSyncOperationsInProperOrder (D:\NestleInsight\backend\node_modules\typeorm\schema-builder\RdbmsSchemaBuilder.js:169:9)
+    at async RdbmsSchemaBuilder.build (D:\NestleInsight\backend\node_modules\typeorm\schema-builder\RdbmsSchemaBuilder.js:66:13)
+    at async DataSource.synchronize (D:\NestleInsight\backend\node_modules\typeorm\data-source\DataSource.js:212:9)
+    at async DataSource.initialize (D:\NestleInsight\backend\node_modules\typeorm\data-source\DataSource.js:157:17)

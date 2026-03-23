@@ -1,0 +1,32 @@
+[Nest] 10388  - 03/19/2026, 8:35:58 PM     LOG [NestFactory] Starting Nest application...
+[Nest] 10388  - 03/19/2026, 8:35:58 PM     LOG [InstanceLoader] AppModule dependencies initialized +9ms
+[Nest] 10388  - 03/19/2026, 8:35:58 PM     LOG [InstanceLoader] TypeOrmModule dependencies initialized +0ms
+[Nest] 10388  - 03/19/2026, 8:35:58 PM     LOG [InstanceLoader] ConfigHostModule dependencies initialized +0ms
+[Nest] 10388  - 03/19/2026, 8:35:58 PM     LOG [InstanceLoader] ConfigModule dependencies initialized +0ms
+[Nest] 10388  - 03/19/2026, 8:35:58 PM     LOG [InstanceLoader] ConfigModule dependencies initialized +1ms
+(node:10388) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+[Nest] 10388  - 03/19/2026, 8:35:58 PM   ERROR [TypeOrmModule] Unable to connect to the database. Retrying (1)...
+QueryFailedError: cannot drop constraint users_pkey on table users because other objects depend on it
+    at PostgresQueryRunner.query (D:\NestleInsight\backend\node_modules\typeorm\driver\postgres\PostgresQueryRunner.js:216:19)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async PostgresQueryRunner.executeQueries (D:\NestleInsight\backend\node_modules\typeorm\query-runner\BaseQueryRunner.js:441:13)
+    at async PostgresQueryRunner.dropColumn (D:\NestleInsight\backend\node_modules\typeorm\driver\postgres\PostgresQueryRunner.js:1218:9)
+    at async PostgresQueryRunner.changeColumn (D:\NestleInsight\backend\node_modules\typeorm\driver\postgres\PostgresQueryRunner.js:753:13)
+    at async PostgresQueryRunner.changeColumns (D:\NestleInsight\backend\node_modules\typeorm\driver\postgres\PostgresQueryRunner.js:1115:13)
+    at async RdbmsSchemaBuilder.updateExistColumns (D:\NestleInsight\backend\node_modules\typeorm\schema-builder\RdbmsSchemaBuilder.js:637:13)
+    at async RdbmsSchemaBuilder.executeSchemaSyncOperationsInProperOrder (D:\NestleInsight\backend\node_modules\typeorm\schema-builder\RdbmsSchemaBuilder.js:171:9)
+    at async RdbmsSchemaBuilder.build (D:\NestleInsight\backend\node_modules\typeorm\schema-builder\RdbmsSchemaBuilder.js:66:13)
+    at async DataSource.synchronize (D:\NestleInsight\backend\node_modules\typeorm\data-source\DataSource.js:212:9)
+[Nest] 10388  - 03/19/2026, 8:36:01 PM   ERROR [TypeOrmModule] Unable to connect to the database. Retrying (2)...
+QueryFailedError: cannot drop constraint users_pkey on table users because other objects depend on it
+    at PostgresQueryRunner.query (D:\NestleInsight\backend\node_modules\typeorm\driver\postgres\PostgresQueryRunner.js:216:19)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async PostgresQueryRunner.executeQueries (D:\NestleInsight\backend\node_modules\typeorm\query-runner\BaseQueryRunner.js:441:13)
+    at async PostgresQueryRunner.dropColumn (D:\NestleInsight\backend\node_modules\typeorm\driver\postgres\PostgresQueryRunner.js:1218:9)
+    at async PostgresQueryRunner.changeColumn (D:\NestleInsight\backend\node_modules\typeorm\driver\postgres\PostgresQueryRunner.js:753:13)
+    at async PostgresQueryRunner.changeColumns (D:\NestleInsight\backend\node_modules\typeorm\driver\postgres\PostgresQueryRunner.js:1115:13)
+    at async RdbmsSchemaBuilder.updateExistColumns (D:\NestleInsight\backend\node_modules\typeorm\schema-builder\RdbmsSchemaBuilder.js:637:13)
+    at async RdbmsSchemaBuilder.executeSchemaSyncOperationsInProperOrder (D:\NestleInsight\backend\node_modules\typeorm\schema-builder\RdbmsSchemaBuilder.js:171:9)
+    at async RdbmsSchemaBuilder.build (D:\NestleInsight\backend\node_modules\typeorm\schema-builder\RdbmsSchemaBuilder.js:66:13)
+    at async DataSource.synchronize (D:\NestleInsight\backend\node_modules\typeorm\data-source\DataSource.js:212:9)

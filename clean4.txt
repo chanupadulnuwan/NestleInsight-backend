@@ -1,0 +1,14 @@
+[Nest] 32124  - 03/19/2026, 8:36:43 PM     LOG [NestFactory] Starting Nest application...
+[Nest] 32124  - 03/19/2026, 8:36:43 PM     LOG [InstanceLoader] AppModule dependencies initialized +12ms
+[Nest] 32124  - 03/19/2026, 8:36:43 PM     LOG [InstanceLoader] TypeOrmModule dependencies initialized +0ms
+[Nest] 32124  - 03/19/2026, 8:36:43 PM     LOG [InstanceLoader] ConfigHostModule dependencies initialized +0ms
+[Nest] 32124  - 03/19/2026, 8:36:43 PM     LOG [InstanceLoader] ConfigModule dependencies initialized +1ms
+[Nest] 32124  - 03/19/2026, 8:36:43 PM     LOG [InstanceLoader] ConfigModule dependencies initialized +0ms
+[Nest] 32124  - 03/19/2026, 8:36:43 PM     LOG [InstanceLoader] TypeOrmCoreModule dependencies initialized +181ms
+[Nest] 32124  - 03/19/2026, 8:36:43 PM     LOG [InstanceLoader] TypeOrmModule dependencies initialized +0ms
+[Nest] 32124  - 03/19/2026, 8:36:43 PM     LOG [InstanceLoader] UsersModule dependencies initialized +0ms
+[Nest] 32124  - 03/19/2026, 8:36:43 PM     LOG [InstanceLoader] AuthModule dependencies initialized +0ms
+[Nest] 32124  - 03/19/2026, 8:36:43 PM     LOG [RoutesResolver] AuthController {/auth}: +4ms
+[Nest] 32124  - 03/19/2026, 8:36:43 PM     LOG [RouterExplorer] Mapped {/auth/register, POST} route +2ms
+[Nest] 32124  - 03/19/2026, 8:36:43 PM     LOG [RoutesResolver] UsersController {/users}: +0ms
+[Nest] 32124  - 03/19/2026, 8:36:43 PM     LOG [NestApplication] Nest application successfully started +2ms
