@@ -2,7 +2,9 @@ import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
+import { ActivityModule } from './activity/activity.module';
 import { AuthModule } from './auth/auth.module';
+import { OrdersModule } from './orders/orders.module';
 import { UsersModule } from './users/users.module';
 
 @Module({
@@ -26,7 +28,9 @@ import { UsersModule } from './users/users.module';
       }),
     }),
 
+    ActivityModule,
     AuthModule,
+    OrdersModule,
     UsersModule,
   ],
 })

@@ -6,6 +6,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
+import { ActivityService } from '../activity/activity.service';
 import { AccountStatus } from '../common/enums/account-status.enum';
 import { ApprovalStatus } from '../common/enums/approval-status.enum';
 import { Role } from '../common/enums/role.enum';
@@ -16,10 +17,15 @@ export class UsersService {
   constructor(
     @InjectRepository(User)
     private readonly usersRepository: Repository<User>,
+    private readonly activityService: ActivityService,
   ) {}
 
   async create(userData: Partial<User>): Promise<User> {
     const user = this.usersRepository.create(userData);
+    return this.usersRepository.save(user);
+  }
+
+  async save(user: User): Promise<User> {
     return this.usersRepository.save(user);
   }
 
@@ -52,6 +58,7 @@ export class UsersService {
       .createQueryBuilder('user')
       .where('user.username = :identifier', { identifier })
       .orWhere('user.email = :identifier', { identifier })
+      .orWhere('user.phoneNumber = :identifier', { identifier })
       .getOne();
   }
 
@@ -111,6 +118,18 @@ export class UsersService {
 
     const savedUser = await this.usersRepository.save(user);
 
+    await this.activityService.logForUser({
+      userId: savedUser.id,
+      type: 'ACCOUNT_APPROVED',
+      title: 'Account approved',
+      message:
+        'Your account moved from pending approval to OTP verification.',
+      metadata: {
+        accountStatus: savedUser.accountStatus,
+        approvalStatus: savedUser.approvalStatus,
+      },
+    });
+
     return {
       message: 'user approved successfully. OTP verification is the next step.',
       user: this.sanitizeUser(savedUser),
@@ -138,6 +157,16 @@ export class UsersService {
     user.approvedAt = null;
 
     const savedUser = await this.usersRepository.save(user);
+
+    await this.activityService.logForUser({
+      userId: savedUser.id,
+      type: 'ACCOUNT_REJECTED',
+      title: 'Account rejected',
+      message: 'Your registration was rejected by an administrator.',
+      metadata: {
+        rejectionReason: savedUser.rejectionReason,
+      },
+    });
 
     return {
       message: 'user rejected successfully',

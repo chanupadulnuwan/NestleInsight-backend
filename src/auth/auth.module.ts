@@ -4,13 +4,16 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { PassportModule } from '@nestjs/passport';
 import { SignOptions } from 'jsonwebtoken';
 
+import { ActivityModule } from '../activity/activity.module';
 import { UsersModule } from '../users/users.module';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
+import { OtpEmailService } from './otp-email.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 
 @Module({
   imports: [
+    ActivityModule,
     UsersModule,
     PassportModule,
     JwtModule.registerAsync({
@@ -26,6 +29,6 @@ import { JwtStrategy } from './strategies/jwt.strategy';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
+  providers: [AuthService, OtpEmailService, JwtStrategy],
 })
-export class AuthModule { }
+export class AuthModule {}

@@ -80,6 +80,11 @@ export class RegisterDto {
 
   @IsOptional()
   @IsString()
+  @MaxLength(255)
+  address?: string;
+
+  @IsOptional()
+  @IsString()
   @MaxLength(150)
   warehouseName?: string;
 

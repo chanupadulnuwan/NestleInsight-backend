@@ -1,20 +1,39 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Test, TestingModule } from '@nestjs/testing';
 
-import { LoginDto } from './dto/login.dto';
-import { RegisterDto } from './dto/register.dto';
+import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 
-@Controller('auth')
-export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+describe('AuthController', () => {
+  let controller: AuthController;
 
-  @Post('register')
-  async register(@Body() registerDto: RegisterDto) {
-    return this.authService.register(registerDto);
-  }
+  const authServiceMock = {
+    register: jest.fn(),
+    login: jest.fn(),
+    resendOtp: jest.fn(),
+    verifyOtp: jest.fn(),
+    getCurrentUserProfile: jest.fn(),
+    updateCurrentUserProfile: jest.fn(),
+    logout: jest.fn(),
+    changePassword: jest.fn(),
+  };
 
-  @Post('login')
-  async login(@Body() loginDto: LoginDto) {
-    return this.authService.login(loginDto);
-  }
-}
+  beforeEach(async () => {
+    jest.clearAllMocks();
+
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [AuthController],
+      providers: [
+        {
+          provide: AuthService,
+          useValue: authServiceMock,
+        },
+      ],
+    }).compile();
+
+    controller = module.get<AuthController>(AuthController);
+  });
+
+  it('should be defined', () => {
+    expect(controller).toBeDefined();
+  });
+});

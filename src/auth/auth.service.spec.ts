@@ -1,195 +1,245 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
+import { Test, TestingModule } from '@nestjs/testing';
+import { JwtService } from '@nestjs/jwt';
 
-import { AccountStatus } from '../common/enums/account-status.enum';
-import { ApprovalStatus } from '../common/enums/approval-status.enum';
+import { ActivityService } from '../activity/activity.service';
 import { Platform } from '../common/enums/platform.enum';
 import { Role } from '../common/enums/role.enum';
 import { UsersService } from '../users/users.service';
-import { RegisterDto } from './dto/register.dto';
+import { AuthService } from './auth.service';
+import { OtpEmailService } from './otp-email.service';
 
-@Injectable()
-export class AuthService {
-  constructor(private readonly usersService: UsersService) {}
+describe('AuthService', () => {
+  let service: AuthService;
 
-  async register(registerDto: RegisterDto) {
-    const {
-      firstName,
-      lastName,
-      username,
-      email,
-      phoneNumber,
-      password,
-      confirmPassword,
-      role,
-      platformAccess,
-      employeeId,
-      nic,
-      shopName,
-      warehouseName,
-      latitude,
-      longitude,
-    } = registerDto;
+  const usersServiceMock = {
+    findById: jest.fn(),
+    findByIdentifier: jest.fn(),
+    findByUsername: jest.fn(),
+    findByEmail: jest.fn(),
+    findByPhoneNumber: jest.fn(),
+    findByEmployeeId: jest.fn(),
+    findByNic: jest.fn(),
+    create: jest.fn(),
+    save: jest.fn(),
+  };
 
-    if (password !== confirmPassword) {
-      throw new BadRequestException('password and confirmPassword do not match');
-    }
+  const jwtServiceMock = {
+    signAsync: jest.fn(),
+  };
 
-    if (role === Role.ADMIN) {
-      throw new BadRequestException('admin cannot register from public signup');
-    }
+  const otpEmailServiceMock = {
+    sendOtpEmail: jest.fn(),
+  };
 
-    this.validateRolePlatform(role, platformAccess);
-    this.validateRoleSpecificFields(registerDto);
+  const activityServiceMock = {
+    logForUser: jest.fn(),
+  };
 
-    const existingUsername = await this.usersService.findByUsername(username);
-    if (existingUsername) {
-      throw new BadRequestException('username is already taken');
-    }
+  beforeEach(async () => {
+    jest.clearAllMocks();
 
-    const existingEmail = await this.usersService.findByEmail(email);
-    if (existingEmail) {
-      throw new BadRequestException('email is already registered');
-    }
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        AuthService,
+        {
+          provide: UsersService,
+          useValue: usersServiceMock,
+        },
+        {
+          provide: JwtService,
+          useValue: jwtServiceMock,
+        },
+        {
+          provide: OtpEmailService,
+          useValue: otpEmailServiceMock,
+        },
+        {
+          provide: ActivityService,
+          useValue: activityServiceMock,
+        },
+      ],
+    }).compile();
 
-    const existingPhone = await this.usersService.findByPhoneNumber(phoneNumber);
-    if (existingPhone) {
-      throw new BadRequestException('phone number is already registered');
-    }
+    service = module.get<AuthService>(AuthService);
+  });
 
-    if (employeeId) {
-      const existingEmployeeId =
-        await this.usersService.findByEmployeeId(employeeId);
-      if (existingEmployeeId) {
-        throw new BadRequestException('employee ID is already assigned');
-      }
-    }
+  it('should be defined', () => {
+    expect(service).toBeDefined();
+  });
 
-    if (nic) {
-      const existingNic = await this.usersService.findByNic(nic);
-      if (existingNic) {
-        throw new BadRequestException('NIC is already assigned');
-      }
-    }
-
-    const passwordHash = await bcrypt.hash(password, 10);
-
-    const needsAdminApproval = [
-      Role.SALES_REP,
-      Role.TERRITORY_DISTRIBUTOR,
-      Role.DEMAND_PLANNER,
-      Role.REGIONAL_MANAGER,
-    ].includes(role);
-
-    const user = await this.usersService.create({
-      firstName,
-      lastName,
-      username,
-      email,
-      phoneNumber,
-      passwordHash,
-      employeeId: employeeId ?? null,
-      nic: nic ?? null,
-      shopName: shopName ?? null,
-      warehouseName: warehouseName ?? null,
-      latitude: latitude ?? null,
-      longitude: longitude ?? null,
-      role,
-      platformAccess,
-      accountStatus: needsAdminApproval
-        ? AccountStatus.PENDING
-        : AccountStatus.OTP_PENDING,
-      approvalStatus: needsAdminApproval
-        ? ApprovalStatus.PENDING
-        : ApprovalStatus.APPROVED,
+  it('creates an OTP-required account for mobile public signup', async () => {
+    usersServiceMock.findByUsername.mockResolvedValue(null);
+    usersServiceMock.findByEmail.mockResolvedValue(null);
+    usersServiceMock.findByPhoneNumber.mockResolvedValue(null);
+    otpEmailServiceMock.sendOtpEmail.mockResolvedValue({ delivered: true });
+    activityServiceMock.logForUser.mockResolvedValue(undefined);
+    usersServiceMock.create.mockImplementation(async (payload) => ({
+      id: 'user-1',
       publicUserCode: null,
-      approvedBy: null,
-      approvedAt: null,
-      rejectionReason: null,
-      isEmailVerified: false,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      otpVerifiedAt: null,
+      ...payload,
+    }));
+    usersServiceMock.save.mockImplementation(async (payload) => payload);
+
+    const result = await service.register({
+      firstName: 'Jane',
+      lastName: 'Doe',
+      username: 'jane_doe',
+      email: 'jane@example.com',
+      phoneNumber: '+94770000000',
+      password: 'Password1',
+      confirmPassword: 'Password1',
+      role: Role.SHOP_OWNER,
+      platformAccess: Platform.MOBILE,
+      shopName: 'Jane Stores',
+      address: '123 Main Street',
+      latitude: 6.9271,
+      longitude: 79.8612,
     });
 
-    const { passwordHash: _, ...safeUser } = user;
+    expect(result.otpRequired).toBe(true);
+    expect(result.otpDeliveryMethod).toBe('email');
+    expect(result.debugOtpCode).toBeUndefined();
+    expect(usersServiceMock.save).toHaveBeenCalled();
+    expect(otpEmailServiceMock.sendOtpEmail).toHaveBeenCalledWith(
+      expect.objectContaining({
+        email: 'jane@example.com',
+        firstName: 'Jane',
+      }),
+    );
+  });
 
-    return {
-      message: needsAdminApproval
-        ? 'Registration submitted successfully. Waiting for admin approval.'
-        : 'Registration successful. OTP verification will be required next.',
-      user: safeUser,
+  it('returns a development OTP when email is not configured locally', async () => {
+    usersServiceMock.findByUsername.mockResolvedValue(null);
+    usersServiceMock.findByEmail.mockResolvedValue(null);
+    usersServiceMock.findByPhoneNumber.mockResolvedValue(null);
+    otpEmailServiceMock.sendOtpEmail.mockResolvedValue({
+      delivered: false,
+      reason: 'SMTP_HOST is not configured',
+    });
+    activityServiceMock.logForUser.mockResolvedValue(undefined);
+    usersServiceMock.create.mockImplementation(async (payload) => ({
+      id: 'user-2',
+      publicUserCode: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      otpVerifiedAt: null,
+      ...payload,
+    }));
+    usersServiceMock.save.mockImplementation(async (payload) => payload);
+
+    const result = await service.register({
+      firstName: 'John',
+      lastName: 'Doe',
+      username: 'john_doe',
+      email: 'john@example.com',
+      phoneNumber: '+94771111111',
+      password: 'Password1',
+      confirmPassword: 'Password1',
+      role: Role.SHOP_OWNER,
+      platformAccess: Platform.MOBILE,
+      shopName: 'John Stores',
+      address: '456 Main Street',
+      latitude: 6.9,
+      longitude: 79.8,
+    });
+
+    expect(result.otpRequired).toBe(true);
+    expect(result.otpDeliveryMethod).toBe('debug');
+    expect(result.debugOtpCode).toMatch(/^\d{6}$/);
+  });
+
+  it('returns the current user profile from the database', async () => {
+    usersServiceMock.findById.mockResolvedValue({
+      id: 'user-3',
+      username: 'jane_store',
+      firstName: 'Jane',
+      lastName: 'Store',
+      email: 'jane@store.com',
+      phoneNumber: '+94771234567',
+      shopName: 'Jane Store',
+      address: 'Galle, Sri Lanka',
+      role: Role.SHOP_OWNER,
+      passwordHash: 'hashed',
+    });
+
+    const result = await service.getCurrentUserProfile('user-3');
+
+    expect(result.user).toEqual(
+      expect.objectContaining({
+        username: 'jane_store',
+        shopName: 'Jane Store',
+      }),
+    );
+  });
+
+  it('updates the current user profile and returns a fresh token', async () => {
+    const currentUser = {
+      id: 'user-4',
+      username: 'old_store',
+      firstName: 'Old',
+      lastName: 'Name',
+      email: 'old@store.com',
+      phoneNumber: '+94770000001',
+      shopName: 'Old Shop',
+      role: Role.SHOP_OWNER,
+      platformAccess: Platform.MOBILE,
+      passwordHash: 'hashed',
     };
-  }
 
-  private validateRolePlatform(role: Role, platformAccess: Platform): void {
-    if (
-      [Role.SALES_REP, Role.TERRITORY_DISTRIBUTOR, Role.SHOP_OWNER].includes(
-        role,
-      ) &&
-      platformAccess !== Platform.MOBILE
-    ) {
-      throw new BadRequestException('this role can only access the mobile app');
-    }
+    usersServiceMock.findById.mockResolvedValue(currentUser);
+    usersServiceMock.findByUsername.mockResolvedValue(null);
+    usersServiceMock.findByEmail.mockResolvedValue(null);
+    usersServiceMock.findByPhoneNumber.mockResolvedValue(null);
+    usersServiceMock.save.mockImplementation(async (payload) => payload);
+    jwtServiceMock.signAsync.mockResolvedValue('fresh-token');
+    activityServiceMock.logForUser.mockResolvedValue(undefined);
 
-    if (
-      [Role.DEMAND_PLANNER, Role.REGIONAL_MANAGER].includes(role) &&
-      platformAccess !== Platform.WEB
-    ) {
-      throw new BadRequestException('this role can only access the web system');
-    }
-  }
+    const result = await service.updateCurrentUserProfile('user-4', {
+      username: 'new_store',
+      firstName: 'New',
+      lastName: 'Owner',
+      email: 'new@store.com',
+      phoneNumber: '+94770000002',
+      shopName: 'New Shop',
+    });
 
-  private validateRoleSpecificFields(registerDto: RegisterDto): void {
-    const {
-      role,
-      employeeId,
-      nic,
-      shopName,
-      warehouseName,
-      latitude,
-      longitude,
-    } = registerDto;
+    expect(result.message).toBe('Profile updated successfully.');
+    expect(result.accessToken).toBe('fresh-token');
+    expect(result.user).toEqual(
+      expect.objectContaining({
+        username: 'new_store',
+        firstName: 'New',
+        lastName: 'Owner',
+        email: 'new@store.com',
+        phoneNumber: '+94770000002',
+        shopName: 'New Shop',
+      }),
+    );
+  });
 
-    if (
-      [Role.SALES_REP, Role.TERRITORY_DISTRIBUTOR, Role.DEMAND_PLANNER].includes(
-        role,
-      ) &&
-      !employeeId &&
-      !nic
-    ) {
-      throw new BadRequestException(
-        'employeeId or nic is required for this role',
-      );
-    }
+  it('changes the password when the current password is correct', async () => {
+    const currentPassword = 'Password1';
+    const currentPasswordHash = await bcrypt.hash(currentPassword, 10);
 
-    if (role === Role.REGIONAL_MANAGER) {
-      if (!employeeId && !nic) {
-        throw new BadRequestException(
-          'employeeId or nic is required for regional manager',
-        );
-      }
+    usersServiceMock.findById.mockResolvedValue({
+      id: 'user-5',
+      username: 'secure_store',
+      passwordHash: currentPasswordHash,
+    });
+    usersServiceMock.save.mockImplementation(async (payload) => payload);
+    activityServiceMock.logForUser.mockResolvedValue(undefined);
 
-      if (!warehouseName) {
-        throw new BadRequestException(
-          'warehouseName is required for regional manager',
-        );
-      }
+    const result = await service.changePassword('user-5', {
+      currentPassword,
+      newPassword: 'Password2',
+      confirmNewPassword: 'Password2',
+    });
 
-      if (latitude === undefined || longitude === undefined) {
-        throw new BadRequestException(
-          'warehouse location is required for regional manager',
-        );
-      }
-    }
-
-    if (role === Role.SHOP_OWNER) {
-      if (!shopName) {
-        throw new BadRequestException('shopName is required for shop owner');
-      }
-
-      if (latitude === undefined || longitude === undefined) {
-        throw new BadRequestException(
-          'shop location is required for shop owner',
-        );
-      }
-    }
-  }
-}
+    expect(result.message).toBe('Password changed successfully.');
+    expect(usersServiceMock.save).toHaveBeenCalled();
+  });
+});

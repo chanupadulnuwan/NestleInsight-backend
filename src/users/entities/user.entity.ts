@@ -70,6 +70,13 @@ export class User {
   shopName: string | null;
 
   @Column({
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
+  address: string | null;
+
+  @Column({
     name: 'warehouse_name',
     type: 'varchar',
     length: 150,
@@ -134,6 +141,23 @@ export class User {
 
   @Column({ name: 'is_email_verified', type: 'boolean', default: false })
   isEmailVerified: boolean;
+
+  @Column({
+    name: 'otp_code_hash',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
+  otpCodeHash: string | null;
+
+  @Column({ name: 'otp_expires_at', type: 'timestamp', nullable: true })
+  otpExpiresAt: Date | null;
+
+  @Column({ name: 'otp_last_sent_at', type: 'timestamp', nullable: true })
+  otpLastSentAt: Date | null;
+
+  @Column({ name: 'otp_verified_at', type: 'timestamp', nullable: true })
+  otpVerifiedAt: Date | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
