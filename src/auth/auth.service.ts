@@ -34,11 +34,20 @@ export class AuthService {
   ) {}
 
   async login(loginDto: LoginDto) {
-    const { identifier, password } = loginDto;
+    const { identifier, password, platformAccess } = loginDto;
     const user = await this.findUserByIdentifier(identifier);
 
     if (!user) {
       throw new UnauthorizedException('invalid credentials');
+    }
+
+    // Website portal update: when the web client sends WEB access, block accounts that only belong on the mobile app.
+    if (platformAccess && user.platformAccess !== platformAccess) {
+      throw new BadRequestException(
+        platformAccess === Platform.WEB
+          ? 'this account cannot access the web portal'
+          : 'this account cannot access the mobile app',
+      );
     }
 
     const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
@@ -78,7 +87,11 @@ export class AuthService {
       userId: user.id,
       type: 'LOGIN',
       title: 'Logged in',
-      message: 'You signed in to the mobile app successfully.',
+      // Website portal update: keep activity text accurate for both web and mobile logins.
+      message:
+        user.platformAccess === Platform.WEB
+          ? 'You signed in to the web portal successfully.'
+          : 'You signed in to the mobile app successfully.',
     });
 
     return {
@@ -112,10 +125,6 @@ export class AuthService {
       throw new BadRequestException(
         'password and confirmPassword do not match',
       );
-    }
-
-    if (role === Role.ADMIN) {
-      throw new BadRequestException('admin cannot register from public signup');
     }
 
     this.validateRolePlatform(role, platformAccess);
@@ -393,7 +402,11 @@ export class AuthService {
       userId: user.id,
       type: 'LOGOUT',
       title: 'Logged out',
-      message: 'You logged out of the mobile app.',
+      // Website portal update: keep logout activity text accurate for both client surfaces.
+      message:
+        user.platformAccess === Platform.WEB
+          ? 'You logged out of the web portal.'
+          : 'You logged out of the mobile app.',
     });
 
     return {
@@ -454,7 +467,8 @@ export class AuthService {
     }
 
     if (
-      [Role.DEMAND_PLANNER, Role.REGIONAL_MANAGER].includes(role) &&
+      // Website portal update: ADMIN is now allowed to self-register on WEB for the requested admin portal flow.
+      [Role.ADMIN, Role.DEMAND_PLANNER, Role.REGIONAL_MANAGER].includes(role) &&
       platformAccess !== Platform.WEB
     ) {
       throw new BadRequestException('this role can only access the web system');
@@ -464,6 +478,7 @@ export class AuthService {
   private validateRoleSpecificFields(registerDto: RegisterDto): void {
     const {
       role,
+      platformAccess,
       employeeId,
       nic,
       shopName,
@@ -472,6 +487,10 @@ export class AuthService {
       latitude,
       longitude,
     } = registerDto;
+
+    if (role === Role.ADMIN && !employeeId && !nic) {
+      throw new BadRequestException('employeeId or nic is required for admin');
+    }
 
     if (role === Role.DEMAND_PLANNER && !employeeId && !nic) {
       throw new BadRequestException(
@@ -488,11 +507,15 @@ export class AuthService {
 
       if (!warehouseName) {
         throw new BadRequestException(
-          'warehouseName is required for regional manager',
+          'territory is required for regional manager',
         );
       }
 
-      if (latitude === undefined || longitude === undefined) {
+      // Website portal update: the web signup modal captures a territory label, so only non-web flows still require coordinates.
+      if (
+        platformAccess !== Platform.WEB &&
+        (latitude === undefined || longitude === undefined)
+      ) {
         throw new BadRequestException(
           'warehouse location is required for regional manager',
         );

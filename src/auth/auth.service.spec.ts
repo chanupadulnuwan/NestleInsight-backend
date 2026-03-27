@@ -3,6 +3,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { JwtService } from '@nestjs/jwt';
 
 import { ActivityService } from '../activity/activity.service';
+import { AccountStatus } from '../common/enums/account-status.enum';
 import { Platform } from '../common/enums/platform.enum';
 import { Role } from '../common/enums/role.enum';
 import { UsersService } from '../users/users.service';
@@ -150,6 +151,107 @@ describe('AuthService', () => {
     expect(result.otpRequired).toBe(true);
     expect(result.otpDeliveryMethod).toBe('debug');
     expect(result.debugOtpCode).toMatch(/^\d{6}$/);
+  });
+
+  it('allows admin self-signup on the web portal and sends OTP verification', async () => {
+    usersServiceMock.findByUsername.mockResolvedValue(null);
+    usersServiceMock.findByEmail.mockResolvedValue(null);
+    usersServiceMock.findByPhoneNumber.mockResolvedValue(null);
+    usersServiceMock.findByEmployeeId.mockResolvedValue(null);
+    otpEmailServiceMock.sendOtpEmail.mockResolvedValue({ delivered: true });
+    activityServiceMock.logForUser.mockResolvedValue(undefined);
+    usersServiceMock.create.mockImplementation(async (payload) => ({
+      id: 'user-admin-1',
+      publicUserCode: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      otpVerifiedAt: null,
+      ...payload,
+    }));
+    usersServiceMock.save.mockImplementation(async (payload) => payload);
+
+    const result = await service.register({
+      firstName: 'Asha',
+      lastName: 'Perera',
+      username: 'asha_admin',
+      email: 'asha.admin@example.com',
+      phoneNumber: '+94771231234',
+      password: 'Password1',
+      confirmPassword: 'Password1',
+      role: Role.ADMIN,
+      platformAccess: Platform.WEB,
+      employeeId: 'ADM-001',
+    });
+
+    expect(result.otpRequired).toBe(true);
+    expect(result.otpDeliveryMethod).toBe('email');
+    expect(usersServiceMock.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        role: Role.ADMIN,
+        platformAccess: Platform.WEB,
+      }),
+    );
+  });
+
+  it('allows web regional manager signup with a territory label and no coordinates', async () => {
+    usersServiceMock.findByUsername.mockResolvedValue(null);
+    usersServiceMock.findByEmail.mockResolvedValue(null);
+    usersServiceMock.findByPhoneNumber.mockResolvedValue(null);
+    usersServiceMock.findByEmployeeId.mockResolvedValue(null);
+    otpEmailServiceMock.sendOtpEmail.mockResolvedValue({ delivered: true });
+    activityServiceMock.logForUser.mockResolvedValue(undefined);
+    usersServiceMock.create.mockImplementation(async (payload) => ({
+      id: 'user-rm-1',
+      publicUserCode: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      otpVerifiedAt: null,
+      ...payload,
+    }));
+    usersServiceMock.save.mockImplementation(async (payload) => payload);
+
+    const result = await service.register({
+      firstName: 'Nuwan',
+      lastName: 'Silva',
+      username: 'nuwan_rm',
+      email: 'nuwan.rm@example.com',
+      phoneNumber: '+94772345678',
+      password: 'Password1',
+      confirmPassword: 'Password1',
+      role: Role.REGIONAL_MANAGER,
+      platformAccess: Platform.WEB,
+      employeeId: 'RM-101',
+      warehouseName: 'Colombo North Territory',
+    });
+
+    expect(result.message).toContain('Waiting for admin approval');
+    expect(result.user).toEqual(
+      expect.objectContaining({
+        role: Role.REGIONAL_MANAGER,
+        warehouseName: 'Colombo North Territory',
+      }),
+    );
+  });
+
+  it('rejects web login attempts for mobile-only accounts when WEB access is requested', async () => {
+    usersServiceMock.findByIdentifier.mockResolvedValue({
+      id: 'user-mobile-1',
+      username: 'shop_user',
+      email: 'shop@example.com',
+      phoneNumber: '+94770001111',
+      platformAccess: Platform.MOBILE,
+      role: Role.SHOP_OWNER,
+      passwordHash: await bcrypt.hash('Password1', 10),
+      accountStatus: AccountStatus.ACTIVE,
+    });
+
+    await expect(
+      service.login({
+        identifier: 'shop_user',
+        password: 'Password1',
+        platformAccess: Platform.WEB,
+      }),
+    ).rejects.toThrow('this account cannot access the web portal');
   });
 
   it('returns the current user profile from the database', async () => {

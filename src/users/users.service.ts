@@ -4,13 +4,25 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 
 import { ActivityService } from '../activity/activity.service';
 import { AccountStatus } from '../common/enums/account-status.enum';
 import { ApprovalStatus } from '../common/enums/approval-status.enum';
 import { Role } from '../common/enums/role.enum';
+import { UpdateUserStatusDto } from './dto/update-user-status.dto';
 import { User } from './entities/user.entity';
+
+type AdminActor = {
+  userId?: string | null;
+  username?: string | null;
+};
+
+const MANAGEABLE_ROLES = [
+  Role.SHOP_OWNER,
+  Role.TERRITORY_DISTRIBUTOR,
+  Role.REGIONAL_MANAGER,
+];
 
 @Injectable()
 export class UsersService {
@@ -79,7 +91,25 @@ export class UsersService {
     };
   }
 
-  async approveUser(userId: string, adminUsername: string) {
+  async findManageableUsersSafe() {
+    const users = await this.usersRepository.find({
+      where: {
+        role: In(MANAGEABLE_ROLES),
+      },
+      order: {
+        role: 'ASC',
+        firstName: 'ASC',
+        lastName: 'ASC',
+      },
+    });
+
+    return {
+      message: 'manageable users fetched successfully',
+      users: users.map((user) => this.sanitizeUser(user)),
+    };
+  }
+
+  async approveUser(userId: string, adminActor: AdminActor) {
     const user = await this.findById(userId);
 
     if (!user) {
@@ -108,7 +138,7 @@ export class UsersService {
 
     user.approvalStatus = ApprovalStatus.APPROVED;
     user.accountStatus = AccountStatus.OTP_PENDING;
-    user.approvedBy = adminUsername;
+    user.approvedBy = adminActor.username ?? 'admin';
     user.approvedAt = new Date();
     user.rejectionReason = null;
 
@@ -122,12 +152,15 @@ export class UsersService {
       userId: savedUser.id,
       type: 'ACCOUNT_APPROVED',
       title: 'Account approved',
-      message:
-        'Your account moved from pending approval to OTP verification.',
+      message: 'Your account moved from pending approval to OTP verification.',
       metadata: {
         accountStatus: savedUser.accountStatus,
         approvalStatus: savedUser.approvalStatus,
       },
+    });
+    await this.logAdminAudit(savedUser, adminActor, 'approved', {
+      nextStatus: savedUser.accountStatus,
+      approvalStatus: savedUser.approvalStatus,
     });
 
     return {
@@ -136,7 +169,11 @@ export class UsersService {
     };
   }
 
-  async rejectUser(userId: string, rejectionReason: string) {
+  async rejectUser(
+    userId: string,
+    rejectionReason: string,
+    adminActor?: AdminActor,
+  ) {
     const user = await this.findById(userId);
 
     if (!user) {
@@ -167,6 +204,10 @@ export class UsersService {
         rejectionReason: savedUser.rejectionReason,
       },
     });
+    await this.logAdminAudit(savedUser, adminActor, 'rejected', {
+      nextStatus: savedUser.accountStatus,
+      rejectionReason: savedUser.rejectionReason,
+    });
 
     return {
       message: 'user rejected successfully',
@@ -174,9 +215,164 @@ export class UsersService {
     };
   }
 
+  async updateUserStatus(
+    userId: string,
+    updateUserStatusDto: UpdateUserStatusDto,
+    adminActor: AdminActor,
+  ) {
+    const user = await this.findById(userId);
+
+    if (!user) {
+      throw new NotFoundException('user not found');
+    }
+
+    this.ensureManageableUser(user);
+
+    if (user.accountStatus === AccountStatus.PENDING) {
+      throw new BadRequestException(
+        'pending users must be handled from the approval panel',
+      );
+    }
+
+    if (
+      ![
+        AccountStatus.ACTIVE,
+        AccountStatus.SUSPENDED,
+        AccountStatus.REJECTED,
+      ].includes(updateUserStatusDto.status)
+    ) {
+      throw new BadRequestException('unsupported status update request');
+    }
+
+    if (user.accountStatus === updateUserStatusDto.status) {
+      throw new BadRequestException('user already has this status');
+    }
+
+    const reason = updateUserStatusDto.reason?.trim() ?? '';
+    const requiresReason =
+      updateUserStatusDto.status === AccountStatus.SUSPENDED ||
+      updateUserStatusDto.status === AccountStatus.REJECTED;
+
+    if (requiresReason && !reason) {
+      throw new BadRequestException(
+        'a reason is required when rejecting or deactivating a user',
+      );
+    }
+
+    if (updateUserStatusDto.status === AccountStatus.ACTIVE) {
+      user.accountStatus = AccountStatus.ACTIVE;
+      user.approvalStatus = ApprovalStatus.APPROVED;
+      user.rejectionReason = null;
+      user.approvedBy = user.approvedBy ?? adminActor.username ?? 'admin';
+      user.approvedAt = user.approvedAt ?? new Date();
+
+      if (!user.publicUserCode) {
+        user.publicUserCode = this.generatePublicUserCode(user.role);
+      }
+    }
+
+    if (updateUserStatusDto.status === AccountStatus.SUSPENDED) {
+      user.accountStatus = AccountStatus.SUSPENDED;
+      user.rejectionReason = reason;
+    }
+
+    if (updateUserStatusDto.status === AccountStatus.REJECTED) {
+      user.accountStatus = AccountStatus.REJECTED;
+      user.approvalStatus = ApprovalStatus.REJECTED;
+      user.rejectionReason = reason;
+    }
+
+    const savedUser = await this.usersRepository.save(user);
+    const activityCopy = this.getStatusActivityCopy(savedUser.accountStatus);
+
+    await this.activityService.logForUser({
+      userId: savedUser.id,
+      type: activityCopy.type,
+      title: activityCopy.title,
+      message: activityCopy.message,
+      metadata: {
+        accountStatus: savedUser.accountStatus,
+        approvalStatus: savedUser.approvalStatus,
+        reason: requiresReason ? reason : null,
+      },
+    });
+
+    await this.logAdminAudit(savedUser, adminActor, activityCopy.auditVerb, {
+      nextStatus: savedUser.accountStatus,
+      approvalStatus: savedUser.approvalStatus,
+      reason: requiresReason ? reason : null,
+    });
+
+    return {
+      message: `user status updated to ${savedUser.accountStatus.toLowerCase()}`,
+      user: this.sanitizeUser(savedUser),
+    };
+  }
+
   private sanitizeUser(user: User) {
+    // Keep the entity payload safe for admin UI responses.
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { passwordHash, ...safeUser } = user;
     return safeUser;
+  }
+
+  private ensureManageableUser(user: User) {
+    if (!MANAGEABLE_ROLES.includes(user.role)) {
+      throw new BadRequestException(
+        'this user is not available in user management',
+      );
+    }
+  }
+
+  private getStatusActivityCopy(nextStatus: AccountStatus) {
+    if (nextStatus === AccountStatus.ACTIVE) {
+      return {
+        type: 'ACCOUNT_ACTIVATED',
+        title: 'Account activated',
+        message: 'An administrator activated your account.',
+        auditVerb: 'activated',
+      };
+    }
+
+    if (nextStatus === AccountStatus.SUSPENDED) {
+      return {
+        type: 'ACCOUNT_DEACTIVATED',
+        title: 'Account deactivated',
+        message: 'An administrator deactivated your account.',
+        auditVerb: 'deactivated',
+      };
+    }
+
+    return {
+      type: 'ACCOUNT_REJECTED',
+      title: 'Account rejected',
+      message: 'An administrator rejected your account.',
+      auditVerb: 'rejected',
+    };
+  }
+
+  private async logAdminAudit(
+    user: User,
+    adminActor: AdminActor | undefined,
+    action: string,
+    metadata?: Record<string, unknown>,
+  ) {
+    if (!adminActor?.userId) {
+      return;
+    }
+
+    await this.activityService.logForUser({
+      userId: adminActor.userId,
+      type: 'USER_STATUS_CHANGED',
+      title: 'User updated',
+      message: `${user.firstName} ${user.lastName} was ${action}.`,
+      metadata: {
+        targetUserId: user.id,
+        targetUsername: user.username,
+        targetRole: user.role,
+        ...metadata,
+      },
+    });
   }
 
   private generatePublicUserCode(role: Role): string {
