@@ -2,10 +2,13 @@ import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { PassportModule } from '@nestjs/passport';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { SignOptions } from 'jsonwebtoken';
 
 import { ActivityModule } from '../activity/activity.module';
+import { Territory } from '../territories/entities/territory.entity';
 import { UsersModule } from '../users/users.module';
+import { Warehouse } from '../warehouses/entities/warehouse.entity';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { OtpEmailService } from './otp-email.service';
@@ -15,6 +18,7 @@ import { JwtStrategy } from './strategies/jwt.strategy';
   imports: [
     ActivityModule,
     UsersModule,
+    TypeOrmModule.forFeature([Territory, Warehouse]),
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],

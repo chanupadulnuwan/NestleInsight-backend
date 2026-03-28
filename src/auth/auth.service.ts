@@ -6,13 +6,18 @@ import {
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
 import { JwtService } from '@nestjs/jwt';
+import { InjectRepository } from '@nestjs/typeorm';
+import { ILike, Repository } from 'typeorm';
 
 import { ActivityService } from '../activity/activity.service';
 import { AccountStatus } from '../common/enums/account-status.enum';
 import { ApprovalStatus } from '../common/enums/approval-status.enum';
 import { Platform } from '../common/enums/platform.enum';
 import { Role } from '../common/enums/role.enum';
+import { findNearestLocation } from '../common/utils/location-assignment.util';
+import { Territory } from '../territories/entities/territory.entity';
 import { User } from '../users/entities/user.entity';
+import { Warehouse } from '../warehouses/entities/warehouse.entity';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { UsersService } from '../users/users.service';
 import { LoginDto } from './dto/login.dto';
@@ -31,6 +36,10 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly otpEmailService: OtpEmailService,
     private readonly activityService: ActivityService,
+    @InjectRepository(Territory)
+    private readonly territoriesRepository: Repository<Territory>,
+    @InjectRepository(Warehouse)
+    private readonly warehousesRepository: Repository<Warehouse>,
   ) {}
 
   async login(loginDto: LoginDto) {
@@ -130,6 +139,15 @@ export class AuthService {
     this.validateRolePlatform(role, platformAccess);
     this.validateRoleSpecificFields(registerDto);
 
+    const assignment =
+      role === Role.SHOP_OWNER
+        ? await this.resolveNearestAssignment(latitude, longitude)
+        : [Role.REGIONAL_MANAGER, Role.TERRITORY_DISTRIBUTOR, Role.SALES_REP].includes(
+              role,
+            )
+          ? await this.resolveWarehouseAssignment(warehouseName)
+          : null;
+
     const existingUsername = await this.usersService.findByUsername(username);
     if (existingUsername) {
       throw new BadRequestException('username is already taken');
@@ -163,10 +181,8 @@ export class AuthService {
 
     const passwordHash = await bcrypt.hash(password, 10);
 
-    const needsAdminApproval = [
-      Role.DEMAND_PLANNER,
-      Role.REGIONAL_MANAGER,
-    ].includes(role);
+    const needsPreOtpAdminApproval = role === Role.DEMAND_PLANNER;
+    const needsPostOtpAdminApproval = role === Role.REGIONAL_MANAGER;
 
     const user = await this.usersService.create({
       firstName,
@@ -179,17 +195,22 @@ export class AuthService {
       nic: nic ?? null,
       shopName: shopName ?? null,
       address: address ?? null,
-      warehouseName: warehouseName ?? null,
+      territoryId: assignment?.territory.id ?? null,
+      territory: assignment?.territory ?? null,
+      warehouseId: assignment?.warehouse.id ?? null,
+      warehouse: assignment?.warehouse ?? null,
+      warehouseName: assignment?.warehouse.name ?? warehouseName ?? null,
       latitude: latitude ?? null,
       longitude: longitude ?? null,
       role,
       platformAccess,
-      accountStatus: needsAdminApproval
+      accountStatus: needsPreOtpAdminApproval
         ? AccountStatus.PENDING
         : AccountStatus.OTP_PENDING,
-      approvalStatus: needsAdminApproval
-        ? ApprovalStatus.PENDING
-        : ApprovalStatus.APPROVED,
+      approvalStatus:
+        needsPreOtpAdminApproval || needsPostOtpAdminApproval
+          ? ApprovalStatus.PENDING
+          : ApprovalStatus.APPROVED,
       publicUserCode: null,
       approvedBy: null,
       approvedAt: null,
@@ -205,16 +226,18 @@ export class AuthService {
       userId: user.id,
       type: 'ACCOUNT_CREATED',
       title: 'Account created',
-      message: needsAdminApproval
+      message: needsPreOtpAdminApproval
         ? 'Your account was created and is waiting for admin approval.'
-        : 'Your account was created and is waiting for OTP verification.',
+        : needsPostOtpAdminApproval
+          ? 'Your account was created and is waiting for OTP verification before admin approval.'
+          : 'Your account was created and is waiting for OTP verification.',
       metadata: {
         accountStatus: user.accountStatus,
         approvalStatus: user.approvalStatus,
       },
     });
 
-    if (needsAdminApproval) {
+    if (needsPreOtpAdminApproval) {
       return {
         message:
           'Registration submitted successfully. Waiting for admin approval.',
@@ -224,7 +247,13 @@ export class AuthService {
 
     const otpCode = await this.issueOtp(user);
 
-    return this.buildOtpResponse(user, 'Registration successful.', otpCode);
+    return this.buildOtpResponse(
+      user,
+      needsPostOtpAdminApproval
+        ? 'Registration successful. Verify OTP to move your request into admin approval.'
+        : 'Registration successful.',
+      otpCode,
+    );
   }
 
   async resendOtp(requestOtpDto: RequestOtpDto) {
@@ -257,8 +286,14 @@ export class AuthService {
       throw new BadRequestException('Invalid OTP.');
     }
 
+    const needsAdminApprovalAfterOtp =
+      user.role === Role.REGIONAL_MANAGER &&
+      user.approvalStatus === ApprovalStatus.PENDING;
+
     user.accountStatus = AccountStatus.ACTIVE;
-    user.approvalStatus = ApprovalStatus.APPROVED;
+    user.approvalStatus = needsAdminApprovalAfterOtp
+      ? ApprovalStatus.PENDING
+      : ApprovalStatus.APPROVED;
     user.isEmailVerified = true;
     user.otpCodeHash = null;
     user.otpExpiresAt = null;
@@ -274,7 +309,9 @@ export class AuthService {
       userId: savedUser.id,
       type: 'ACCOUNT_ACTIVATED',
       title: 'Account activated',
-      message: 'Your account moved from OTP pending to active.',
+      message: needsAdminApprovalAfterOtp
+        ? 'Your account moved from OTP pending to active and is waiting for admin approval.'
+        : 'Your account moved from OTP pending to active.',
       metadata: {
         accountStatus: savedUser.accountStatus,
         approvalStatus: savedUser.approvalStatus,
@@ -282,7 +319,9 @@ export class AuthService {
     });
 
     return {
-      message: 'OTP verified successfully. You can log in now.',
+      message: needsAdminApprovalAfterOtp
+        ? 'OTP verified successfully. Your account is now waiting for admin approval.'
+        : 'OTP verified successfully. You can log in now.',
       user: this.sanitizeUser(savedUser),
     };
   }
@@ -478,7 +517,6 @@ export class AuthService {
   private validateRoleSpecificFields(registerDto: RegisterDto): void {
     const {
       role,
-      platformAccess,
       employeeId,
       nic,
       shopName,
@@ -507,19 +545,16 @@ export class AuthService {
 
       if (!warehouseName) {
         throw new BadRequestException(
-          'territory is required for regional manager',
+          'warehouse name is required for territory manager',
         );
       }
+    }
 
-      // Website portal update: the web signup modal captures a territory label, so only non-web flows still require coordinates.
-      if (
-        platformAccess !== Platform.WEB &&
-        (latitude === undefined || longitude === undefined)
-      ) {
-        throw new BadRequestException(
-          'warehouse location is required for regional manager',
-        );
-      }
+    if (
+      [Role.TERRITORY_DISTRIBUTOR, Role.SALES_REP].includes(role) &&
+      !warehouseName
+    ) {
+      throw new BadRequestException('warehouse name is required for this role');
     }
 
     if (role === Role.SHOP_OWNER) {
@@ -698,10 +733,106 @@ export class AuthService {
       otpCodeHash: _otpCodeHash,
       otpExpiresAt: _otpExpiresAt,
       otpLastSentAt: _otpLastSentAt,
+      territory,
+      warehouse,
       ...safeUser
     } = user;
 
-    return safeUser;
+    return {
+      ...safeUser,
+      territoryId: user.territoryId,
+      territoryName: territory?.name ?? null,
+      territory: territory?.name ?? null,
+      warehouseId: user.warehouseId,
+      warehouseName: warehouse?.name ?? user.warehouseName,
+    };
+  }
+
+  private async resolveWarehouseAssignment(warehouseName?: string | null) {
+    const normalizedWarehouseName = warehouseName?.trim();
+    if (!normalizedWarehouseName) {
+      return null;
+    }
+
+    const warehouse =
+      (await this.warehousesRepository.findOne({
+        where: [
+          { name: ILike(normalizedWarehouseName) },
+          { slug: this.toSlug(normalizedWarehouseName) },
+        ],
+        relations: {
+          territory: true,
+        },
+      })) ?? null;
+
+    if (!warehouse?.territory) {
+      throw new BadRequestException({
+        message: 'Warehouse name did not match a registered warehouse.',
+        code: 'WAREHOUSE_ASSIGNMENT_NOT_FOUND',
+      });
+    }
+
+    return {
+      territory: warehouse.territory,
+      warehouse,
+    };
+  }
+
+  private async resolveNearestAssignment(
+    latitude?: number,
+    longitude?: number,
+  ) {
+    if (latitude === undefined || longitude === undefined) {
+      return null;
+    }
+
+    const [territories, warehouses] = await Promise.all([
+      this.territoriesRepository.find({
+        order: {
+          name: 'ASC',
+        },
+      }),
+      this.warehousesRepository.find({
+        relations: {
+          territory: true,
+        },
+        order: {
+          name: 'ASC',
+        },
+      }),
+    ]);
+
+    const nearestWarehouse = findNearestLocation(
+      latitude,
+      longitude,
+      warehouses.filter(
+        (warehouse) =>
+          warehouse.latitude !== null && warehouse.longitude !== null,
+      ) as Array<
+        Warehouse & {
+          latitude: number;
+          longitude: number;
+        }
+      >,
+    );
+    const nearestTerritory = findNearestLocation(latitude, longitude, territories);
+
+    const territory =
+      nearestWarehouse?.item.territory ?? nearestTerritory?.item ?? null;
+    const warehouse = nearestWarehouse?.item ?? null;
+
+    if (!territory || !warehouse) {
+      throw new BadRequestException({
+        message:
+          'The system could not match the selected location to a territory and warehouse yet.',
+        code: 'LOCATION_ASSIGNMENT_NOT_AVAILABLE',
+      });
+    }
+
+    return {
+      territory,
+      warehouse,
+    };
   }
 
   private generateOtpCode() {
@@ -723,5 +854,13 @@ export class AuthService {
     const randomPart = Math.floor(1000 + Math.random() * 9000);
 
     return `${prefix}-${timePart}${randomPart}`;
+  }
+
+  private toSlug(value: string) {
+    return value
+      .toLowerCase()
+      .trim()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '');
   }
 }

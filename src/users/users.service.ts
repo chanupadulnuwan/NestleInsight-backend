@@ -42,32 +42,70 @@ export class UsersService {
   }
 
   async findById(id: string): Promise<User | null> {
-    return this.usersRepository.findOne({ where: { id } });
+    return this.usersRepository.findOne({
+      where: { id },
+      relations: {
+        territory: true,
+        warehouse: true,
+      },
+    });
   }
 
   async findByUsername(username: string): Promise<User | null> {
-    return this.usersRepository.findOne({ where: { username } });
+    return this.usersRepository.findOne({
+      where: { username },
+      relations: {
+        territory: true,
+        warehouse: true,
+      },
+    });
   }
 
   async findByEmail(email: string): Promise<User | null> {
-    return this.usersRepository.findOne({ where: { email } });
+    return this.usersRepository.findOne({
+      where: { email },
+      relations: {
+        territory: true,
+        warehouse: true,
+      },
+    });
   }
 
   async findByPhoneNumber(phoneNumber: string): Promise<User | null> {
-    return this.usersRepository.findOne({ where: { phoneNumber } });
+    return this.usersRepository.findOne({
+      where: { phoneNumber },
+      relations: {
+        territory: true,
+        warehouse: true,
+      },
+    });
   }
 
   async findByEmployeeId(employeeId: string): Promise<User | null> {
-    return this.usersRepository.findOne({ where: { employeeId } });
+    return this.usersRepository.findOne({
+      where: { employeeId },
+      relations: {
+        territory: true,
+        warehouse: true,
+      },
+    });
   }
 
   async findByNic(nic: string): Promise<User | null> {
-    return this.usersRepository.findOne({ where: { nic } });
+    return this.usersRepository.findOne({
+      where: { nic },
+      relations: {
+        territory: true,
+        warehouse: true,
+      },
+    });
   }
 
   async findByIdentifier(identifier: string): Promise<User | null> {
     return this.usersRepository
       .createQueryBuilder('user')
+      .leftJoinAndSelect('user.territory', 'territory')
+      .leftJoinAndSelect('user.warehouse', 'warehouse')
       .where('user.username = :identifier', { identifier })
       .orWhere('user.email = :identifier', { identifier })
       .orWhere('user.phoneNumber = :identifier', { identifier })
@@ -75,15 +113,18 @@ export class UsersService {
   }
 
   async findPendingUsersSafe() {
-    const users = await this.usersRepository.find({
-      where: {
-        accountStatus: AccountStatus.PENDING,
+    const users = await this.usersRepository
+      .createQueryBuilder('user')
+      .leftJoinAndSelect('user.territory', 'territory')
+      .leftJoinAndSelect('user.warehouse', 'warehouse')
+      .where('user.approvalStatus = :approvalStatus', {
         approvalStatus: ApprovalStatus.PENDING,
-      },
-      order: {
-        createdAt: 'DESC',
-      },
-    });
+      })
+      .andWhere('user.accountStatus IN (:...accountStatuses)', {
+        accountStatuses: [AccountStatus.PENDING, AccountStatus.ACTIVE],
+      })
+      .orderBy('user.createdAt', 'DESC')
+      .getMany();
 
     return {
       message: 'pending users fetched successfully',
@@ -95,6 +136,10 @@ export class UsersService {
     const users = await this.usersRepository.find({
       where: {
         role: In(MANAGEABLE_ROLES),
+      },
+      relations: {
+        territory: true,
+        warehouse: true,
       },
       order: {
         role: 'ASC',
@@ -116,9 +161,14 @@ export class UsersService {
       throw new NotFoundException('user not found');
     }
 
+    if (user.approvalStatus !== ApprovalStatus.PENDING) {
+      throw new BadRequestException('only pending users can be approved');
+    }
+
     if (
-      user.accountStatus !== AccountStatus.PENDING ||
-      user.approvalStatus !== ApprovalStatus.PENDING
+      ![AccountStatus.PENDING, AccountStatus.ACTIVE].includes(
+        user.accountStatus,
+      )
     ) {
       throw new BadRequestException('only pending users can be approved');
     }
@@ -136,8 +186,12 @@ export class UsersService {
       );
     }
 
+    const needsOtpAfterApproval = user.accountStatus === AccountStatus.PENDING;
+
     user.approvalStatus = ApprovalStatus.APPROVED;
-    user.accountStatus = AccountStatus.OTP_PENDING;
+    user.accountStatus = needsOtpAfterApproval
+      ? AccountStatus.OTP_PENDING
+      : AccountStatus.ACTIVE;
     user.approvedBy = adminActor.username ?? 'admin';
     user.approvedAt = new Date();
     user.rejectionReason = null;
@@ -164,7 +218,9 @@ export class UsersService {
     });
 
     return {
-      message: 'user approved successfully. OTP verification is the next step.',
+      message: needsOtpAfterApproval
+        ? 'user approved successfully. OTP verification is the next step.'
+        : 'user approved successfully. Full web portal access is now active.',
       user: this.sanitizeUser(savedUser),
     };
   }
@@ -180,9 +236,16 @@ export class UsersService {
       throw new NotFoundException('user not found');
     }
 
+    if (user.approvalStatus !== ApprovalStatus.PENDING) {
+      throw new BadRequestException('only pending users can be rejected');
+    }
+
     if (
-      user.accountStatus !== AccountStatus.PENDING ||
-      user.approvalStatus !== ApprovalStatus.PENDING
+      ![
+        AccountStatus.PENDING,
+        AccountStatus.OTP_PENDING,
+        AccountStatus.ACTIVE,
+      ].includes(user.accountStatus)
     ) {
       throw new BadRequestException('only pending users can be rejected');
     }
@@ -310,10 +373,24 @@ export class UsersService {
   }
 
   private sanitizeUser(user: User) {
-    // Keep the entity payload safe for admin UI responses.
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { passwordHash, ...safeUser } = user;
-    return safeUser;
+    const {
+      passwordHash,
+      otpCodeHash,
+      otpExpiresAt,
+      otpLastSentAt,
+      territory,
+      warehouse,
+      ...safeUser
+    } = user;
+
+    return {
+      ...safeUser,
+      territoryId: user.territoryId,
+      territoryName: territory?.name ?? null,
+      territory: territory?.name ?? null,
+      warehouseId: user.warehouseId,
+      warehouseName: warehouse?.name ?? user.warehouseName,
+    };
   }
 
   private ensureManageableUser(user: User) {

@@ -1,9 +1,11 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 
 import { ActivityService } from '../activity/activity.service';
+import { ProductStatus } from '../common/enums/product-status.enum';
 import { Role } from '../common/enums/role.enum';
+import { Product } from '../products/entities/product.entity';
 import { UsersService } from '../users/users.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { Order } from './entities/order.entity';
@@ -13,20 +15,51 @@ export class OrdersService {
   constructor(
     @InjectRepository(Order)
     private readonly ordersRepository: Repository<Order>,
+    @InjectRepository(Product)
+    private readonly productsRepository: Repository<Product>,
     private readonly usersService: UsersService,
     private readonly activityService: ActivityService,
   ) {}
 
   async createCurrentUserOrder(userId: string, createOrderDto: CreateOrderDto) {
     const user = await this.requireShopOwner(userId);
-    const normalizedItems = createOrderDto.items.map((item) => ({
-      productCode: item.productCode.trim(),
-      productName: item.productName.trim(),
-      imageAssetPath: item.imageAssetPath?.trim() || null,
-      unitPrice: Number(item.unitPrice),
-      quantity: Number(item.quantity),
-      lineTotal: Number((item.unitPrice * item.quantity).toFixed(2)),
-    }));
+    const productIds = [
+      ...new Set(createOrderDto.items.map((item) => item.productId)),
+    ];
+    const products = await this.productsRepository.find({
+      where: {
+        id: In(productIds),
+      },
+    });
+    const productsById = new Map(
+      products.map((product) => [product.id, product]),
+    );
+
+    const normalizedItems = createOrderDto.items.map((item) => {
+      const product = productsById.get(item.productId);
+
+      if (!product || product.status !== ProductStatus.ACTIVE) {
+        throw new BadRequestException({
+          message: 'One or more selected products are currently unavailable.',
+          code: 'PRODUCT_CURRENTLY_UNAVAILABLE',
+        });
+      }
+
+      const casePrice = Number(product.casePrice);
+      const quantity = Number(item.quantity);
+
+      return {
+        productId: product.id,
+        product,
+        skuSnapshot: product.sku,
+        productNameSnapshot: product.productName,
+        packSizeSnapshot: product.packSize,
+        imageUrlSnapshot: product.imageUrl,
+        casePriceSnapshot: casePrice,
+        quantity,
+        lineTotal: Number((casePrice * quantity).toFixed(2)),
+      };
+    });
 
     const totalAmount = Number(
       normalizedItems
@@ -38,6 +71,8 @@ export class OrdersService {
       orderCode: this.generateOrderCode(),
       userId: user.id,
       shopNameSnapshot: user.shopName ?? `${user.firstName} ${user.lastName}`,
+      territoryId: user.territoryId,
+      warehouseId: user.warehouseId,
       status: 'PLACED',
       currencyCode: 'LKR',
       totalAmount,
@@ -70,6 +105,10 @@ export class OrdersService {
 
     const orders = await this.ordersRepository.find({
       where: { userId },
+      relations: {
+        territory: true,
+        warehouse: true,
+      },
       order: { placedAt: 'DESC' },
     });
 
@@ -84,6 +123,10 @@ export class OrdersService {
 
     const latestOrder = await this.ordersRepository.findOne({
       where: { userId },
+      relations: {
+        territory: true,
+        warehouse: true,
+      },
       order: { placedAt: 'DESC' },
     });
 
@@ -108,6 +151,14 @@ export class OrdersService {
       );
     }
 
+    if (!user.territoryId || !user.warehouseId) {
+      throw new BadRequestException({
+        message:
+          'Your shop is not assigned to a territory warehouse yet. Please contact support.',
+        code: 'SHOP_ASSIGNMENT_NOT_AVAILABLE',
+      });
+    }
+
     return user;
   }
 
@@ -117,6 +168,10 @@ export class OrdersService {
       orderCode: order.orderCode,
       userId: order.userId,
       shopName: order.shopNameSnapshot,
+      territoryId: order.territoryId,
+      territoryName: order.territory?.name ?? null,
+      warehouseId: order.warehouseId,
+      warehouseName: order.warehouse?.name ?? null,
       status: order.status,
       currencyCode: order.currencyCode,
       totalAmount: order.totalAmount,
@@ -124,14 +179,42 @@ export class OrdersService {
       createdAt: order.createdAt,
       items: order.items.map((item) => ({
         id: item.id,
-        productCode: item.productCode,
-        productName: item.productName,
-        imageAssetPath: item.imageAssetPath,
-        unitPrice: item.unitPrice,
+        productId: item.productId,
+        sku: item.skuSnapshot,
+        productName: item.productNameSnapshot,
+        packSize: item.packSizeSnapshot,
+        imageUrl: item.imageUrlSnapshot,
+        // Keep older migrated orders readable even when their stored line total
+        // came from legacy per-unit pricing instead of the newer case pricing.
+        casePrice: this.resolveItemDisplayPrice(
+          item.casePriceSnapshot,
+          item.lineTotal,
+          item.quantity,
+        ),
+        isCurrentlyAvailable: item.product?.status === ProductStatus.ACTIVE,
         quantity: item.quantity,
         lineTotal: item.lineTotal,
       })),
     };
+  }
+
+  private resolveItemDisplayPrice(
+    snapshotPrice: number,
+    lineTotal: number,
+    quantity: number,
+  ) {
+    if (quantity <= 0) {
+      return snapshotPrice;
+    }
+
+    const expectedLineTotal = Number((snapshotPrice * quantity).toFixed(2));
+    const normalizedLineTotal = Number(lineTotal.toFixed(2));
+
+    if (Math.abs(expectedLineTotal - normalizedLineTotal) <= 0.01) {
+      return snapshotPrice;
+    }
+
+    return Number((lineTotal / quantity).toFixed(2));
   }
 
   private generateOrderCode() {

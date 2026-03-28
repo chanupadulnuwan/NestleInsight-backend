@@ -4,8 +4,12 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { ActivityModule } from './activity/activity.module';
 import { AuthModule } from './auth/auth.module';
+import { CategoriesModule } from './categories/categories.module';
 import { OrdersModule } from './orders/orders.module';
+import { ProductsModule } from './products/products.module';
+import { TerritoriesModule } from './territories/territories.module';
 import { UsersModule } from './users/users.module';
+import { WarehousesModule } from './warehouses/warehouses.module';
 
 @Module({
   imports: [
@@ -24,14 +28,19 @@ import { UsersModule } from './users/users.module';
         password: configService.get<string>('DB_PASSWORD') || '',
         database: configService.get<string>('DB_NAME') || 'nestle_insight',
         autoLoadEntities: true,
-        synchronize: true,
+        // Keep schema changes explicit through SQL migrations instead of runtime sync.
+        synchronize: configService.get<string>('DB_SYNCHRONIZE') === 'true',
       }),
     }),
 
     ActivityModule,
     AuthModule,
+    CategoriesModule,
     OrdersModule,
+    ProductsModule,
+    TerritoriesModule,
     UsersModule,
+    WarehousesModule,
   ],
 })
 export class AppModule {}

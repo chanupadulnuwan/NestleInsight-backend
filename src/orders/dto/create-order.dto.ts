@@ -3,33 +3,16 @@ import {
   ArrayMinSize,
   IsArray,
   IsInt,
-  IsNumber,
-  IsOptional,
   IsString,
+  IsUUID,
   Max,
-  MaxLength,
   Min,
   ValidateNested,
 } from 'class-validator';
 
 export class CreateOrderItemDto {
-  @IsString()
-  @MaxLength(60)
-  productCode: string;
-
-  @IsString()
-  @MaxLength(160)
-  productName: string;
-
-  @IsOptional()
-  @IsString()
-  @MaxLength(255)
-  imageAssetPath?: string;
-
-  @Type(() => Number)
-  @IsNumber()
-  @Min(0.01)
-  unitPrice: number;
+  @IsUUID()
+  productId: string;
 
   // TODO: Replace these fallback quantity limits with product-level min/max values from admin master data.
   @Type(() => Number)

@@ -2,6 +2,9 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  JoinColumn,
+  ManyToOne,
+  OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
@@ -10,6 +13,8 @@ import { AccountStatus } from '../../common/enums/account-status.enum';
 import { ApprovalStatus } from '../../common/enums/approval-status.enum';
 import { Platform } from '../../common/enums/platform.enum';
 import { Role } from '../../common/enums/role.enum';
+import { Territory } from '../../territories/entities/territory.entity';
+import { Warehouse } from '../../warehouses/entities/warehouse.entity';
 
 @Entity('users')
 export class User {
@@ -85,6 +90,34 @@ export class User {
   warehouseName: string | null;
 
   @Column({
+    name: 'territory_id',
+    type: 'uuid',
+    nullable: true,
+  })
+  territoryId: string | null;
+
+  @ManyToOne(() => Territory, (territory) => territory.users, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'territory_id' })
+  territory: Territory | null;
+
+  @Column({
+    name: 'warehouse_id',
+    type: 'uuid',
+    nullable: true,
+  })
+  warehouseId: string | null;
+
+  @ManyToOne(() => Warehouse, (warehouse) => warehouse.users, {
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
+  @JoinColumn({ name: 'warehouse_id' })
+  warehouse: Warehouse | null;
+
+  @Column({
     type: 'double precision',
     nullable: true,
   })
@@ -158,6 +191,9 @@ export class User {
 
   @Column({ name: 'otp_verified_at', type: 'timestamp', nullable: true })
   otpVerifiedAt: Date | null;
+
+  @OneToMany(() => Warehouse, (warehouse) => warehouse.managerUser)
+  managedWarehouses: Warehouse[];
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

@@ -6,6 +6,7 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 
+import { Product } from '../../products/entities/product.entity';
 import { Order } from './order.entity';
 
 @Entity('order_items')
@@ -20,22 +21,32 @@ export class OrderItem {
   @JoinColumn({ name: 'order_id' })
   order: Order;
 
-  @Column({ name: 'product_code', type: 'varchar', length: 60 })
-  productCode: string;
+  @Column({ name: 'product_id', type: 'uuid', nullable: true })
+  productId: string | null;
 
-  @Column({ name: 'product_name', type: 'varchar', length: 160 })
-  productName: string;
+  @ManyToOne(() => Product, { eager: true, nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'product_id' })
+  product: Product | null;
+
+  @Column({ name: 'sku_snapshot', type: 'varchar', length: 80 })
+  skuSnapshot: string;
+
+  @Column({ name: 'product_name_snapshot', type: 'varchar', length: 160 })
+  productNameSnapshot: string;
+
+  @Column({ name: 'pack_size_snapshot', type: 'varchar', length: 60, nullable: true })
+  packSizeSnapshot: string | null;
 
   @Column({
-    name: 'image_asset_path',
+    name: 'image_url_snapshot',
     type: 'varchar',
     length: 255,
     nullable: true,
   })
-  imageAssetPath: string | null;
+  imageUrlSnapshot: string | null;
 
-  @Column({ name: 'unit_price', type: 'double precision' })
-  unitPrice: number;
+  @Column({ name: 'case_price_snapshot', type: 'double precision' })
+  casePriceSnapshot: number;
 
   @Column({ type: 'integer' })
   quantity: number;

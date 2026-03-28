@@ -9,7 +9,9 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
+import { Territory } from '../../territories/entities/territory.entity';
 import { User } from '../../users/entities/user.entity';
+import { Warehouse } from '../../warehouses/entities/warehouse.entity';
 import { OrderItem } from './order-item.entity';
 
 @Entity('orders')
@@ -29,6 +31,20 @@ export class Order {
 
   @Column({ name: 'shop_name_snapshot', type: 'varchar', length: 150 })
   shopNameSnapshot: string;
+
+  @Column({ name: 'territory_id', type: 'uuid', nullable: true })
+  territoryId: string | null;
+
+  @ManyToOne(() => Territory, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'territory_id' })
+  territory: Territory | null;
+
+  @Column({ name: 'warehouse_id', type: 'uuid', nullable: true })
+  warehouseId: string | null;
+
+  @ManyToOne(() => Warehouse, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'warehouse_id' })
+  warehouse: Warehouse | null;
 
   @Column({ type: 'varchar', length: 30, default: 'PLACED' })
   status: string;
