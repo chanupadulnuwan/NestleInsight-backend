@@ -9,6 +9,11 @@ import { Product } from '../products/entities/product.entity';
 import { UsersService } from '../users/users.service';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { Order } from './entities/order.entity';
+import {
+  createAutomaticDelayPatch,
+  getOrderDueAt,
+  isOrderOverdue,
+} from './order-status.util';
 
 @Injectable()
 export class OrdersService {
@@ -112,6 +117,8 @@ export class OrdersService {
       order: { placedAt: 'DESC' },
     });
 
+    await this.syncAutomaticDelays(orders);
+
     return {
       message: 'orders fetched successfully',
       orders: orders.map((order) => this.serializeOrder(order)),
@@ -130,12 +137,37 @@ export class OrdersService {
       order: { placedAt: 'DESC' },
     });
 
+    await this.syncAutomaticDelayForOrder(latestOrder);
+
     return {
       message: latestOrder
         ? 'latest order fetched successfully'
         : 'no previous order found',
       order: latestOrder ? this.serializeOrder(latestOrder) : null,
     };
+  }
+
+  async syncAutomaticDelays(orders: Order[]) {
+    const overdueOrders = orders.filter((order) => isOrderOverdue(order));
+
+    await Promise.all(
+      overdueOrders.map((order) => this.syncAutomaticDelayForOrder(order)),
+    );
+
+    return orders;
+  }
+
+  async syncAutomaticDelayForOrder(order: Order | null) {
+    if (!order || !isOrderOverdue(order)) {
+      return order;
+    }
+
+    const patch = createAutomaticDelayPatch(order.placedAt);
+
+    await this.ordersRepository.update(order.id, patch);
+    Object.assign(order, patch);
+
+    return order;
   }
 
   private async requireShopOwner(userId: string) {
@@ -163,6 +195,8 @@ export class OrdersService {
   }
 
   private serializeOrder(order: Order) {
+    const deliveryDueAt = getOrderDueAt(order.placedAt);
+
     return {
       id: order.id,
       orderCode: order.orderCode,
@@ -176,6 +210,12 @@ export class OrdersService {
       currencyCode: order.currencyCode,
       totalAmount: order.totalAmount,
       placedAt: order.placedAt,
+      approvedAt: order.approvedAt,
+      customerNote: order.customerNote,
+      delayReason: order.delayReason,
+      delayedAt: order.delayedAt,
+      deliveryDueAt: deliveryDueAt.toISOString(),
+      isOverdue: isOrderOverdue(order),
       createdAt: order.createdAt,
       items: order.items.map((item) => ({
         id: item.id,

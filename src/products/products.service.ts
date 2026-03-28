@@ -9,9 +9,9 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
-import { seedCategories } from '../categories/categories.seed';
 import { Category } from '../categories/entities/category.entity';
 import { ProductStatus } from '../common/enums/product-status.enum';
+import { seedInitialCatalog } from '../database/seeds/catalog.seeder';
 import {
   buildProductImageUrl,
   resolveStoredProductImagePath,
@@ -19,7 +19,6 @@ import {
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { Product } from './entities/product.entity';
-import { seedProducts } from './products.seed';
 
 type SerializedProduct = {
   id: string;
@@ -243,49 +242,10 @@ export class ProductsService implements OnModuleInit {
   }
 
   private async seedInitialProducts() {
-    await this.categoriesRepository.upsert(seedCategories, ['slug']);
-
-    const existingProducts = await this.productsRepository.count();
-    if (existingProducts > 0) {
-      return;
-    }
-
-    const categories = await this.categoriesRepository.find();
-    const categoriesBySlug = new Map(
-      categories.map((category) => [category.slug, category]),
+    await seedInitialCatalog(
+      this.categoriesRepository,
+      this.productsRepository,
     );
-
-    const productEntities = seedProducts.map((seedProduct) => {
-      const category = categoriesBySlug.get(seedProduct.categorySlug);
-
-      if (!category) {
-        throw new Error(
-          `Unable to seed product "${seedProduct.productName}" because category "${seedProduct.categorySlug}" was not found.`,
-        );
-      }
-
-      return this.productsRepository.create({
-        productName: seedProduct.productName,
-        sku: seedProduct.sku,
-        categoryId: category.id,
-        category,
-        brand: seedProduct.brand,
-        packSize: seedProduct.packSize,
-        unitPrice: this.roundCurrency(seedProduct.unitPrice),
-        productsPerCase: seedProduct.productsPerCase,
-        casePrice: this.resolveCasePrice(
-          seedProduct.casePrice,
-          seedProduct.unitPrice,
-          seedProduct.productsPerCase,
-        ),
-        barcode: seedProduct.barcode ?? null,
-        description: seedProduct.description ?? null,
-        imageUrl: seedProduct.imageUrl,
-        status: ProductStatus.ACTIVE,
-      });
-    });
-
-    await this.productsRepository.save(productEntities);
   }
 
   private normalizeProductInput(

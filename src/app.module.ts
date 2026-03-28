@@ -5,6 +5,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ActivityModule } from './activity/activity.module';
 import { AuthModule } from './auth/auth.module';
 import { CategoriesModule } from './categories/categories.module';
+import { DeliveryAssignmentsModule } from './delivery-assignments/delivery-assignments.module';
 import { OrdersModule } from './orders/orders.module';
 import { ProductsModule } from './products/products.module';
 import { TerritoriesModule } from './territories/territories.module';
@@ -36,6 +37,7 @@ import { WarehousesModule } from './warehouses/warehouses.module';
     ActivityModule,
     AuthModule,
     CategoriesModule,
+    DeliveryAssignmentsModule,
     OrdersModule,
     ProductsModule,
     TerritoriesModule,

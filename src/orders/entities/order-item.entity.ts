@@ -39,8 +39,7 @@ export class OrderItem {
 
   @Column({
     name: 'image_url_snapshot',
-    type: 'varchar',
-    length: 255,
+    type: 'text',
     nullable: true,
   })
   imageUrlSnapshot: string | null;

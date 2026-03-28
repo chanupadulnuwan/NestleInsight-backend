@@ -90,6 +90,10 @@ export class AuthService {
       throw new BadRequestException('account is not active');
     }
 
+    if (user.approvalStatus === ApprovalStatus.PENDING) {
+      throw new BadRequestException(this.getPendingApprovalMessage(user));
+    }
+
     const accessToken = await this.createAccessToken(user);
 
     await this.activityService.logForUser({
@@ -183,6 +187,12 @@ export class AuthService {
 
     const needsPreOtpAdminApproval = role === Role.DEMAND_PLANNER;
     const needsPostOtpAdminApproval = role === Role.REGIONAL_MANAGER;
+    const needsTerritoryManagerApproval = this.requiresTerritoryManagerApproval(
+      role,
+      assignment?.warehouse.id ?? null,
+    );
+    const needsPostOtpApproval =
+      needsPostOtpAdminApproval || needsTerritoryManagerApproval;
 
     const user = await this.usersService.create({
       firstName,
@@ -208,7 +218,7 @@ export class AuthService {
         ? AccountStatus.PENDING
         : AccountStatus.OTP_PENDING,
       approvalStatus:
-        needsPreOtpAdminApproval || needsPostOtpAdminApproval
+        needsPreOtpAdminApproval || needsPostOtpApproval
           ? ApprovalStatus.PENDING
           : ApprovalStatus.APPROVED,
       publicUserCode: null,
@@ -228,6 +238,8 @@ export class AuthService {
       title: 'Account created',
       message: needsPreOtpAdminApproval
         ? 'Your account was created and is waiting for admin approval.'
+        : needsTerritoryManagerApproval
+          ? 'Your account was created and is waiting for OTP verification before territory manager approval.'
         : needsPostOtpAdminApproval
           ? 'Your account was created and is waiting for OTP verification before admin approval.'
           : 'Your account was created and is waiting for OTP verification.',
@@ -236,6 +248,10 @@ export class AuthService {
         approvalStatus: user.approvalStatus,
       },
     });
+
+    if (needsTerritoryManagerApproval) {
+      await this.notifyWarehouseManagerOfPendingApproval(user);
+    }
 
     if (needsPreOtpAdminApproval) {
       return {
@@ -286,12 +302,13 @@ export class AuthService {
       throw new BadRequestException('Invalid OTP.');
     }
 
-    const needsAdminApprovalAfterOtp =
-      user.role === Role.REGIONAL_MANAGER &&
-      user.approvalStatus === ApprovalStatus.PENDING;
+    const needsPostOtpApproval =
+      user.approvalStatus === ApprovalStatus.PENDING &&
+      (user.role === Role.REGIONAL_MANAGER ||
+        this.requiresTerritoryManagerApproval(user.role, user.warehouseId));
 
     user.accountStatus = AccountStatus.ACTIVE;
-    user.approvalStatus = needsAdminApprovalAfterOtp
+    user.approvalStatus = needsPostOtpApproval
       ? ApprovalStatus.PENDING
       : ApprovalStatus.APPROVED;
     user.isEmailVerified = true;
@@ -309,8 +326,8 @@ export class AuthService {
       userId: savedUser.id,
       type: 'ACCOUNT_ACTIVATED',
       title: 'Account activated',
-      message: needsAdminApprovalAfterOtp
-        ? 'Your account moved from OTP pending to active and is waiting for admin approval.'
+      message: needsPostOtpApproval
+        ? this.getPostOtpApprovalMessage(savedUser)
         : 'Your account moved from OTP pending to active.',
       metadata: {
         accountStatus: savedUser.accountStatus,
@@ -318,9 +335,16 @@ export class AuthService {
       },
     });
 
+    if (
+      needsPostOtpApproval &&
+      this.requiresTerritoryManagerApproval(savedUser.role, savedUser.warehouseId)
+    ) {
+      await this.notifyWarehouseManagerOfPendingApproval(savedUser);
+    }
+
     return {
-      message: needsAdminApprovalAfterOtp
-        ? 'OTP verified successfully. Your account is now waiting for admin approval.'
+      message: needsPostOtpApproval
+        ? `OTP verified successfully. ${this.getPendingApprovalFollowUp(savedUser)}`
         : 'OTP verified successfully. You can log in now.',
       user: this.sanitizeUser(savedUser),
     };
@@ -647,7 +671,10 @@ export class AuthService {
   }
 
   private get isDebugOtpEnabled() {
-    return process.env.NODE_ENV !== 'production';
+    return (
+      process.env.NODE_ENV !== 'production' ||
+      !!process.env.OTP_DEBUG_CODE?.trim()
+    );
   }
 
   private async deliverOtp(
@@ -715,6 +742,91 @@ export class AuthService {
     };
 
     return this.jwtService.signAsync(payload);
+  }
+
+  private requiresTerritoryManagerApproval(
+    role: Role,
+    warehouseId?: string | null,
+  ) {
+    return (
+      !!warehouseId &&
+      [Role.TERRITORY_DISTRIBUTOR, Role.SHOP_OWNER].includes(role)
+    );
+  }
+
+  private getPendingApprovalMessage(user: User) {
+    if (user.role === Role.REGIONAL_MANAGER) {
+      return 'account is waiting for admin approval';
+    }
+
+    if (this.requiresTerritoryManagerApproval(user.role, user.warehouseId)) {
+      return 'account is waiting for territory manager approval';
+    }
+
+    return 'account is waiting for approval';
+  }
+
+  private getPostOtpApprovalMessage(user: User) {
+    if (user.role === Role.REGIONAL_MANAGER) {
+      return 'Your account moved from OTP pending to active and is waiting for admin approval.';
+    }
+
+    if (this.requiresTerritoryManagerApproval(user.role, user.warehouseId)) {
+      return 'Your account moved from OTP pending to active and is waiting for territory manager approval.';
+    }
+
+    return 'Your account moved from OTP pending to active.';
+  }
+
+  private getPendingApprovalFollowUp(user: User) {
+    if (user.role === Role.REGIONAL_MANAGER) {
+      return 'Your account is now waiting for admin approval.';
+    }
+
+    if (this.requiresTerritoryManagerApproval(user.role, user.warehouseId)) {
+      return 'Your account is now waiting for territory manager approval.';
+    }
+
+    return 'Your account is now waiting for approval.';
+  }
+
+  private async notifyWarehouseManagerOfPendingApproval(user: User) {
+    if (!user.warehouseId) {
+      return;
+    }
+
+    const tms = await this.usersService.findTmsByWarehouseId(user.warehouseId);
+    if (tms.length === 0) {
+      return;
+    }
+
+    const fullName = `${user.firstName} ${user.lastName}`.trim();
+    const warehouseName = user.warehouseName ?? user.warehouse?.name ?? 'your warehouse';
+
+    await Promise.all(
+      tms.map((tm) =>
+        this.activityService.logForUser({
+          userId: tm.id,
+          type: 'WAREHOUSE_APPROVAL_PENDING',
+          title: 'New approval pending',
+          message: `${fullName} is waiting for approval as a ${this.formatRoleLabel(user.role)} under ${warehouseName}.`,
+          metadata: {
+            pendingUserId: user.id,
+            pendingUserRole: user.role,
+            warehouseId: user.warehouseId,
+            warehouseName,
+          },
+        }),
+      ),
+    );
+  }
+
+  private formatRoleLabel(role: Role) {
+    return role
+      .toLowerCase()
+      .split('_')
+      .map((part) => `${part.charAt(0).toUpperCase()}${part.slice(1)}`)
+      .join(' ');
   }
 
   private normalizeRequiredProfileField(value: string, fieldName: string) {
@@ -836,6 +948,10 @@ export class AuthService {
   }
 
   private generateOtpCode() {
+    const debugCode = process.env.OTP_DEBUG_CODE?.trim();
+    if (debugCode && /^\d{6}$/.test(debugCode)) {
+      return debugCode;
+    }
     return (100000 + Math.floor(Math.random() * 900000)).toString();
   }
 

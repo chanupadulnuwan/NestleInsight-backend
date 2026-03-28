@@ -101,6 +101,13 @@ export class UsersService {
     });
   }
 
+  async findTmsByWarehouseId(warehouseId: string): Promise<User[]> {
+    return this.usersRepository.find({
+      where: { warehouseId, role: Role.REGIONAL_MANAGER },
+      select: ['id'],
+    });
+  }
+
   async findByIdentifier(identifier: string): Promise<User | null> {
     return this.usersRepository
       .createQueryBuilder('user')
@@ -206,7 +213,9 @@ export class UsersService {
       userId: savedUser.id,
       type: 'ACCOUNT_APPROVED',
       title: 'Account approved',
-      message: 'Your account moved from pending approval to OTP verification.',
+      message: needsOtpAfterApproval
+        ? 'Your account moved from pending approval to OTP verification.'
+        : 'Your account has been approved and is now fully active.',
       metadata: {
         accountStatus: savedUser.accountStatus,
         approvalStatus: savedUser.approvalStatus,
@@ -374,10 +383,10 @@ export class UsersService {
 
   private sanitizeUser(user: User) {
     const {
-      passwordHash,
-      otpCodeHash,
-      otpExpiresAt,
-      otpLastSentAt,
+      passwordHash: _passwordHash,
+      otpCodeHash: _otpCodeHash,
+      otpExpiresAt: _otpExpiresAt,
+      otpLastSentAt: _otpLastSentAt,
       territory,
       warehouse,
       ...safeUser

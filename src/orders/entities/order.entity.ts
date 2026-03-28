@@ -62,6 +62,27 @@ export class Order {
   })
   placedAt: Date;
 
+  @Column({ name: 'approved_by', type: 'uuid', nullable: true })
+  approvedBy: string | null;
+
+  @Column({ name: 'approved_at', type: 'timestamp', nullable: true })
+  approvedAt: Date | null;
+
+  @Column({ name: 'delay_reason', type: 'text', nullable: true })
+  delayReason: string | null;
+
+  @Column({ name: 'customer_note', type: 'text', nullable: true })
+  customerNote: string | null;
+
+  @Column({ name: 'delayed_at', type: 'timestamp', nullable: true })
+  delayedAt: Date | null;
+
+  @Column({ name: 'delayed_by', type: 'uuid', nullable: true })
+  delayedBy: string | null;
+
+  @Column({ name: 'assignment_id', type: 'uuid', nullable: true })
+  assignmentId: string | null;
+
   @OneToMany(() => OrderItem, (item) => item.order, {
     cascade: true,
     eager: true,

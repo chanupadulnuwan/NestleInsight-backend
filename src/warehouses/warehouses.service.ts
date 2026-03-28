@@ -335,7 +335,7 @@ export class WarehousesService {
 
       if (item.reorderLevel > item.maxCapacityCases) {
         throw new BadRequestException(
-          'Reorder level cannot exceed the maximum capacity.',
+        'Refill level cannot exceed the maximum capacity.',
         );
       }
 

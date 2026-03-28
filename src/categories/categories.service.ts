@@ -2,8 +2,8 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
+import { upsertSeedCategories } from '../database/seeds/catalog.seeder';
 import { Category } from './entities/category.entity';
-import { seedCategories } from './categories.seed';
 
 @Injectable()
 export class CategoriesService implements OnModuleInit {
@@ -30,6 +30,6 @@ export class CategoriesService implements OnModuleInit {
   }
 
   private async seedInitialCategories() {
-    await this.categoriesRepository.upsert(seedCategories, ['slug']);
+    await upsertSeedCategories(this.categoriesRepository);
   }
 }

@@ -31,6 +31,15 @@
 $ npm install
 ```
 
+## Database setup
+
+For a fresh PostgreSQL database, initialize the current schema and seed the
+built-in product catalog with:
+
+```bash
+$ npm run db:init
+```
+
 ## Compile and run the project
 
 ```bash
