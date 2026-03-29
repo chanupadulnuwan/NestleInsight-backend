@@ -6,6 +6,7 @@ import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';
 
 import { AppModule } from './app.module';
+import { SpaFallbackFilter } from './spa-fallback.filter';
 
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule);
@@ -36,25 +37,14 @@ async function bootstrap() {
     prefix: '/uploads/',
   });
 
-  // Serve web frontend if web-dist folder exists (production)
+  // Serve web frontend static assets if web-dist folder exists (production)
   const webDistPath = join(process.cwd(), 'web-dist');
-  const spaIndexPath = join(webDistPath, 'index.html');
   if (existsSync(webDistPath)) {
     app.useStaticAssets(webDistPath);
-
-    // SPA fallback: return index.html for any path that isn't an API route or a static file
-    const expressApp = app.getHttpAdapter().getInstance() as any;
-    expressApp.use((req: any, res: any, next: any) => {
-      const p: string = req.path ?? '';
-      const isApiRoute = /^\/(auth|users|products|categories|orders|territories|warehouses|vehicles|activity|delivery-assignments|tm|uploads)(\/|$)/.test(p);
-      const isFile = p.includes('.');
-      if (!isApiRoute && !isFile && existsSync(spaIndexPath)) {
-        res.sendFile(spaIndexPath);
-      } else {
-        next();
-      }
-    });
   }
+
+  // SPA fallback: intercept 404/401/403 on browser navigations and return index.html
+  app.useGlobalFilters(new SpaFallbackFilter());
 
   await app.listen(port, host);
 }
