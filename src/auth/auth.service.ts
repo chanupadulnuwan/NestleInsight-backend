@@ -2,6 +2,7 @@ import {
   BadRequestException,
   InternalServerErrorException,
   Injectable,
+  NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
 import * as bcrypt from 'bcrypt';
@@ -40,7 +41,7 @@ export class AuthService {
     private readonly territoriesRepository: Repository<Territory>,
     @InjectRepository(Warehouse)
     private readonly warehousesRepository: Repository<Warehouse>,
-  ) {}
+  ) { }
 
   async login(loginDto: LoginDto) {
     const { identifier, password, platformAccess } = loginDto;
@@ -147,8 +148,8 @@ export class AuthService {
       role === Role.SHOP_OWNER
         ? await this.resolveNearestAssignment(latitude, longitude)
         : [Role.REGIONAL_MANAGER, Role.TERRITORY_DISTRIBUTOR, Role.SALES_REP].includes(
-              role,
-            )
+          role,
+        )
           ? await this.resolveWarehouseAssignment(warehouseName)
           : null;
 
@@ -186,7 +187,7 @@ export class AuthService {
     const passwordHash = await bcrypt.hash(password, 10);
 
     const needsPreOtpAdminApproval = role === Role.DEMAND_PLANNER;
-    const needsPostOtpAdminApproval = role === Role.REGIONAL_MANAGER;
+    const needsPostOtpAdminApproval = role === Role.REGIONAL_MANAGER || role === Role.SALES_REP;
     const needsTerritoryManagerApproval = this.requiresTerritoryManagerApproval(
       role,
       assignment?.warehouse.id ?? null,
@@ -240,9 +241,9 @@ export class AuthService {
         ? 'Your account was created and is waiting for admin approval.'
         : needsTerritoryManagerApproval
           ? 'Your account was created and is waiting for OTP verification before territory manager approval.'
-        : needsPostOtpAdminApproval
-          ? 'Your account was created and is waiting for OTP verification before admin approval.'
-          : 'Your account was created and is waiting for OTP verification.',
+          : needsPostOtpAdminApproval
+            ? 'Your account was created and is waiting for OTP verification before admin approval.'
+            : 'Your account was created and is waiting for OTP verification.',
       metadata: {
         accountStatus: user.accountStatus,
         approvalStatus: user.approvalStatus,
@@ -305,6 +306,7 @@ export class AuthService {
     const needsPostOtpApproval =
       user.approvalStatus === ApprovalStatus.PENDING &&
       (user.role === Role.REGIONAL_MANAGER ||
+        user.role === Role.SALES_REP ||
         this.requiresTerritoryManagerApproval(user.role, user.warehouseId));
 
     user.accountStatus = AccountStatus.ACTIVE;
@@ -356,6 +358,33 @@ export class AuthService {
     return {
       message: 'profile fetched successfully',
       user: this.sanitizeUser(user),
+    };
+  }
+
+  /**
+   * GET /auth/status?email=<email>
+   *
+   * Public endpoint — no JWT required.
+   * Returns the minimal status fields the Flutter PendingApprovalScreen
+   * needs to poll every 10 seconds. Deliberately avoids exposing sensitive
+   * user data (password hash, OTP hash, etc.).
+   */
+  async getAccountStatus(email: string) {
+    if (!email?.trim()) {
+      throw new BadRequestException('email is required');
+    }
+
+    const user = await this.usersService.findByEmail(email.trim().toLowerCase());
+
+    if (!user) {
+      throw new NotFoundException('account not found');
+    }
+
+    return {
+      message: 'status fetched successfully',
+      accountStatus: user.accountStatus,
+      approvalStatus: user.approvalStatus,
+      rejectionReason: user.rejectionReason ?? null,
     };
   }
 
@@ -739,6 +768,7 @@ export class AuthService {
       email: user.email,
       role: user.role,
       platformAccess: user.platformAccess,
+      territoryId: user.territoryId ?? null,
     };
 
     return this.jwtService.signAsync(payload);

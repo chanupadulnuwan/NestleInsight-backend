@@ -1,7 +1,11 @@
 import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { RolesGuard } from '../auth/guards/roles.guard';
+import { Roles } from '../auth/decorators/roles.decorator';
+import { Role } from '../common/enums/role.enum';
 import { SubmitFeedbackDto } from './dto/submit-feedback.dto';
+import { SubmitOrderFeedbackDto } from './dto/submit-order-feedback.dto';
 import { ActivityService } from './activity.service';
 
 @Controller('activities')
@@ -21,5 +25,39 @@ export class ActivityController {
       req.user?.userId,
       submitFeedbackDto.message,
     );
+  }
+
+  /**
+   * POST /activities/order-feedback
+   *
+   * Shop Owner submits a star-rating + comment for a completed order.
+   * shopOwnerId and territoryId are taken from the verified JWT payload
+   * — the client payload only supplies orderId, rating, and comment.
+   */
+  @UseGuards(JwtAuthGuard)
+  @Post('order-feedback')
+  submitOrderFeedback(
+    @Req() req: any,
+    @Body() dto: SubmitOrderFeedbackDto,
+  ) {
+    const { userId: shopOwnerId, territoryId } = req.user as {
+      userId: string;
+      territoryId: string;
+    };
+
+    return this.activityService.submitOrderFeedback(shopOwnerId, territoryId, dto);
+  }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TERRITORY_DISTRIBUTOR)
+  @Get('feedback/my-territory')
+  getMyTerritoryFeedback(@Req() req: any) {
+    const { territoryId } = req.user as { territoryId: string | null };
+    
+    if (!territoryId) {
+      return [];
+    }
+
+    return this.activityService.getFeedbackByTerritory(territoryId);
   }
 }

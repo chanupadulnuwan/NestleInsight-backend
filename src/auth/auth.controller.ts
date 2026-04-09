@@ -4,6 +4,7 @@ import {
   Get,
   Patch,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -39,6 +40,18 @@ export class AuthController {
   @Post('otp/verify')
   async verifyOtp(@Body() verifyOtpDto: VerifyOtpDto) {
     return this.authService.verifyOtp(verifyOtpDto);
+  }
+
+  /**
+   * GET /auth/status?email=<email>
+   *
+   * Public endpoint polled by the Flutter PendingApprovalScreen.
+   * Returns the account's current accountStatus and approvalStatus
+   * so the mobile app can react without requiring a JWT.
+   */
+  @Get('status')
+  getAccountStatus(@Query('email') email: string) {
+    return this.authService.getAccountStatus(email);
   }
 
   @UseGuards(JwtAuthGuard)

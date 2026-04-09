@@ -22,6 +22,7 @@ const MANAGEABLE_ROLES = [
   Role.SHOP_OWNER,
   Role.TERRITORY_DISTRIBUTOR,
   Role.REGIONAL_MANAGER,
+  Role.SALES_REP,
 ];
 
 @Injectable()

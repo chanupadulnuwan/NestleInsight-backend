@@ -1,11 +1,14 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
 import { Role } from '../common/enums/role.enum';
+import { Order } from '../orders/entities/order.entity';
 import { User } from '../users/entities/user.entity';
+import { SubmitOrderFeedbackDto } from './dto/submit-order-feedback.dto';
 import { ActivityLog } from './entities/activity.entity';
 import { FeedbackSubmission } from './entities/feedback-submission.entity';
+import { OrderFeedback } from './entities/order-feedback.entity';
 
 type LogActivityInput = {
   userId: string;
@@ -22,6 +25,10 @@ export class ActivityService {
     private readonly activityRepository: Repository<ActivityLog>,
     @InjectRepository(FeedbackSubmission)
     private readonly feedbackRepository: Repository<FeedbackSubmission>,
+    @InjectRepository(OrderFeedback)
+    private readonly orderFeedbackRepository: Repository<OrderFeedback>,
+    @InjectRepository(Order)
+    private readonly orderRepository: Repository<Order>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
   ) {}
@@ -81,7 +88,7 @@ export class ActivityService {
 
     if (shopOwner?.territoryId) {
       const territoryManager = await this.userRepository.findOne({
-        where: { role: Role.REGIONAL_MANAGER, territoryId: shopOwner.territoryId },
+        where: { role: Role.TERRITORY_DISTRIBUTOR, territoryId: shopOwner.territoryId },
         select: ['id'],
       });
 
@@ -104,5 +111,101 @@ export class ActivityService {
       message: 'Feedback submitted successfully.',
       feedback: savedFeedback,
     };
+  }
+
+  // ─── Order-Specific Star Rating Feedback ────────────────────────────────────
+
+  async submitOrderFeedback(
+    shopOwnerId: string,
+    territoryId: string,
+    dto: SubmitOrderFeedbackDto,
+  ): Promise<{ message: string; feedback: OrderFeedback }> {
+    // 1. Verify the order exists and belongs to this shop owner.
+    const order = await this.orderRepository.findOne({
+      where: { id: dto.orderId, userId: shopOwnerId },
+      select: ['id', 'orderCode', 'status', 'userId', 'territoryId'],
+    });
+
+    if (!order) {
+      throw new NotFoundException('Order not found or does not belong to you.');
+    }
+
+    // 2. Only completed orders may be reviewed.
+    if (order.status !== 'COMPLETED') {
+      throw new BadRequestException(
+        'Feedback can only be submitted for completed orders.',
+      );
+    }
+
+    // 3. Check duplicate feedback.
+    const existing = await this.orderFeedbackRepository.findOne({
+      where: { orderId: dto.orderId, shopOwnerId },
+    });
+
+    if (existing) {
+      throw new BadRequestException(
+        'You have already submitted feedback for this order.',
+      );
+    }
+
+    // 4. Persist the feedback.
+    const feedback = this.orderFeedbackRepository.create({
+      shopOwnerId,
+      orderId: dto.orderId,
+      rating: dto.rating,
+      comment: dto.comment?.trim() ?? null,
+      territoryId,
+    });
+
+    const saved = await this.orderFeedbackRepository.save(feedback);
+
+    // 5. Fetch the shop owner's display name for the activity log.
+    const shopOwner = await this.userRepository.findOne({
+      where: { id: shopOwnerId },
+      select: ['id', 'firstName', 'lastName', 'shopName'],
+    });
+
+    const displayName =
+      shopOwner?.shopName ??
+      `${shopOwner?.firstName ?? ''} ${shopOwner?.lastName ?? ''}`.trim();
+
+    const stars = '★'.repeat(dto.rating) + '☆'.repeat(5 - dto.rating);
+    const commentSnippet = dto.comment
+      ? ` — "${dto.comment.substring(0, 100)}${dto.comment.length > 100 ? '…' : ''}"`
+      : '';
+
+    // 6. Notify the Territory Distributor who owns this territory.
+    const tm = await this.userRepository.findOne({
+      where: { role: Role.TERRITORY_DISTRIBUTOR, territoryId },
+      select: ['id'],
+    });
+
+    if (tm) {
+      await this.logForUser({
+        userId: tm.id,
+        type: 'ORDER_FEEDBACK',
+        title: `${displayName} rated order ${order.orderCode}`,
+        message: `Shop owner gave ${stars} (${dto.rating}/5)${commentSnippet}`,
+        metadata: {
+          feedbackId: saved.id,
+          orderId: order.id,
+          orderCode: order.orderCode,
+          rating: dto.rating,
+          comment: dto.comment ?? null,
+          fromUserId: shopOwnerId,
+          fromUserName: displayName,
+        },
+      });
+    }
+
+    return { message: 'Feedback submitted successfully.', feedback: saved };
+  }
+
+  async getFeedbackByTerritory(territoryId: string): Promise<OrderFeedback[]> {
+    return this.orderFeedbackRepository.find({
+      where: { territoryId },
+      relations: ['shopOwner', 'order'],
+      order: { createdAt: 'DESC' },
+    });
   }
 }
