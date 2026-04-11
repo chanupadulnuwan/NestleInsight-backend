@@ -60,4 +60,17 @@ export class ActivityController {
 
     return this.activityService.getFeedbackByTerritory(territoryId);
   }
+
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.TERRITORY_DISTRIBUTOR, Role.REGIONAL_MANAGER)
+  @Get('text-feedback/my-territory')
+  getMyTerritoryTextFeedback(@Req() req: any) {
+    const { territoryId } = req.user as { territoryId: string | null };
+    
+    if (!territoryId) {
+      return [];
+    }
+
+    return this.activityService.getTextFeedbackByTerritory(territoryId);
+  }
 }

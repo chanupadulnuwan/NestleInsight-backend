@@ -208,4 +208,23 @@ export class ActivityService {
       order: { createdAt: 'DESC' },
     });
   }
+
+  async getTextFeedbackByTerritory(territoryId: string): Promise<any[]> {
+    return this.feedbackRepository
+      .createQueryBuilder('fb')
+      .select([
+        'fb.id AS "id"',
+        'fb.userId AS "userId"',
+        'fb.message AS "message"',
+        'fb.status AS "status"',
+        'fb.createdAt AS "createdAt"',
+        'u.firstName AS "firstName"',
+        'u.lastName AS "lastName"',
+        'u.shopName AS "shopName"'
+      ])
+      .innerJoin(User, 'u', 'u.id = fb.userId')
+      .where('u.territoryId = :territoryId', { territoryId })
+      .orderBy('fb.createdAt', 'DESC')
+      .getRawMany();
+  }
 }
