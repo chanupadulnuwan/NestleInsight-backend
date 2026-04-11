@@ -49,9 +49,9 @@ export class ActivityController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.TERRITORY_DISTRIBUTOR)
+  @Roles(Role.TERRITORY_DISTRIBUTOR, Role.REGIONAL_MANAGER)
   @Get('feedback/my-territory')
-  getMyTerritoryFeedback(@Req() req: any) {
+  getMyTerritoryOrderFeedback(@Req() req: any) {
     const { territoryId } = req.user as { territoryId: string | null };
     
     if (!territoryId) {
