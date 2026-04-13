@@ -23,8 +23,8 @@ export class WarehousesController {
   constructor(private readonly warehousesService: WarehousesService) {}
 
   @Get()
-  @UseGuards(JwtAuthGuard, RolesGuard, PortalApprovalGuard)
-  @Roles(Role.ADMIN, Role.REGIONAL_MANAGER)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.REGIONAL_MANAGER, Role.SALES_REP)
   listWarehouses(
     @Query('territoryId') territoryId?: string,
     @Query('search') search?: string,

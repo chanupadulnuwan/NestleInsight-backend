@@ -31,7 +31,7 @@ export class UsersService {
     @InjectRepository(User)
     private readonly usersRepository: Repository<User>,
     private readonly activityService: ActivityService,
-  ) {}
+  ) { }
 
   async create(userData: Partial<User>): Promise<User> {
     const user = this.usersRepository.create(userData);
@@ -50,6 +50,10 @@ export class UsersService {
         warehouse: true,
       },
     });
+  }
+
+  async findByRole(role: Role): Promise<User[]> {
+    return this.usersRepository.find({ where: { role } });
   }
 
   async findByUsername(username: string): Promise<User | null> {
@@ -478,4 +482,7 @@ export class UsersService {
 
     return `${prefix}-${timePart}${randomPart}`;
   }
+
+
+
 }

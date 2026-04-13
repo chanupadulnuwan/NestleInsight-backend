@@ -20,8 +20,8 @@ export class TerritoriesController {
   constructor(private readonly territoriesService: TerritoriesService) {}
 
   @Get()
-  @UseGuards(JwtAuthGuard, RolesGuard, PortalApprovalGuard)
-  @Roles(Role.ADMIN, Role.REGIONAL_MANAGER)
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.REGIONAL_MANAGER, Role.SALES_REP)
   listTerritories() {
     return this.territoriesService.listTerritories();
   }

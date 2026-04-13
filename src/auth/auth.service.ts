@@ -51,7 +51,6 @@ export class AuthService {
       throw new UnauthorizedException('invalid credentials');
     }
 
-    // Website portal update: when the web client sends WEB access, block accounts that only belong on the mobile app.
     if (platformAccess && user.platformAccess !== platformAccess) {
       throw new BadRequestException(
         platformAccess === Platform.WEB
@@ -101,7 +100,6 @@ export class AuthService {
       userId: user.id,
       type: 'LOGIN',
       title: 'Logged in',
-      // Website portal update: keep activity text accurate for both web and mobile logins.
       message:
         user.platformAccess === Platform.WEB
           ? 'You signed in to the web portal successfully.'
@@ -304,10 +302,9 @@ export class AuthService {
     }
 
     const needsPostOtpApproval =
-      user.approvalStatus === ApprovalStatus.PENDING &&
-      (user.role === Role.REGIONAL_MANAGER ||
-        user.role === Role.SALES_REP ||
-        this.requiresTerritoryManagerApproval(user.role, user.warehouseId));
+      user.role === Role.REGIONAL_MANAGER ||
+      user.role === Role.SALES_REP ||
+      this.requiresTerritoryManagerApproval(user.role, user.warehouseId);
 
     user.accountStatus = AccountStatus.ACTIVE;
     user.approvalStatus = needsPostOtpApproval
@@ -344,10 +341,15 @@ export class AuthService {
       await this.notifyWarehouseManagerOfPendingApproval(savedUser);
     }
 
+    if (needsPostOtpApproval && savedUser.role === Role.SALES_REP) {
+      await this.notifyAdminOfPendingSalesRep(savedUser);
+    }
+
     return {
       message: needsPostOtpApproval
         ? `OTP verified successfully. ${this.getPendingApprovalFollowUp(savedUser)}`
         : 'OTP verified successfully. You can log in now.',
+      needsAdminApproval: savedUser.role === Role.SALES_REP && needsPostOtpApproval,
       user: this.sanitizeUser(savedUser),
     };
   }
@@ -361,14 +363,6 @@ export class AuthService {
     };
   }
 
-  /**
-   * GET /auth/status?email=<email>
-   *
-   * Public endpoint — no JWT required.
-   * Returns the minimal status fields the Flutter PendingApprovalScreen
-   * needs to poll every 10 seconds. Deliberately avoids exposing sensitive
-   * user data (password hash, OTP hash, etc.).
-   */
   async getAccountStatus(email: string) {
     if (!email?.trim()) {
       throw new BadRequestException('email is required');
@@ -494,7 +488,6 @@ export class AuthService {
       userId: user.id,
       type: 'LOGOUT',
       title: 'Logged out',
-      // Website portal update: keep logout activity text accurate for both client surfaces.
       message:
         user.platformAccess === Platform.WEB
           ? 'You logged out of the web portal.'
@@ -559,7 +552,6 @@ export class AuthService {
     }
 
     if (
-      // Website portal update: ADMIN is now allowed to self-register on WEB for the requested admin portal flow.
       [Role.ADMIN, Role.DEMAND_PLANNER, Role.REGIONAL_MANAGER].includes(role) &&
       platformAccess !== Platform.WEB
     ) {
@@ -769,6 +761,7 @@ export class AuthService {
       role: user.role,
       platformAccess: user.platformAccess,
       territoryId: user.territoryId ?? null,
+      warehouseId: user.warehouseId ?? null,
     };
 
     return this.jwtService.signAsync(payload);
@@ -785,7 +778,7 @@ export class AuthService {
   }
 
   private getPendingApprovalMessage(user: User) {
-    if (user.role === Role.REGIONAL_MANAGER) {
+    if (user.role === Role.REGIONAL_MANAGER || user.role === Role.SALES_REP) {
       return 'account is waiting for admin approval';
     }
 
@@ -797,7 +790,7 @@ export class AuthService {
   }
 
   private getPostOtpApprovalMessage(user: User) {
-    if (user.role === Role.REGIONAL_MANAGER) {
+    if (user.role === Role.REGIONAL_MANAGER || user.role === Role.SALES_REP) {
       return 'Your account moved from OTP pending to active and is waiting for admin approval.';
     }
 
@@ -809,7 +802,7 @@ export class AuthService {
   }
 
   private getPendingApprovalFollowUp(user: User) {
-    if (user.role === Role.REGIONAL_MANAGER) {
+    if (user.role === Role.REGIONAL_MANAGER || user.role === Role.SALES_REP) {
       return 'Your account is now waiting for admin approval.';
     }
 
@@ -840,6 +833,29 @@ export class AuthService {
           type: 'WAREHOUSE_APPROVAL_PENDING',
           title: 'New approval pending',
           message: `${fullName} is waiting for approval as a ${this.formatRoleLabel(user.role)} under ${warehouseName}.`,
+          metadata: {
+            pendingUserId: user.id,
+            pendingUserRole: user.role,
+            warehouseId: user.warehouseId,
+            warehouseName,
+          },
+        }),
+      ),
+    );
+  }
+
+  private async notifyAdminOfPendingSalesRep(user: User) {
+    const admins = await this.usersService.findByRole(Role.ADMIN);
+    const fullName = `${user.firstName} ${user.lastName}`.trim();
+    const warehouseName = user.warehouseName ?? user.warehouse?.name ?? 'unknown warehouse';
+
+    await Promise.all(
+      admins.map((admin) =>
+        this.activityService.logForUser({
+          userId: admin.id,
+          type: 'SALES_REP_APPROVAL_PENDING',
+          title: 'New Sales Rep awaiting approval',
+          message: `${fullName} completed OTP verification and is waiting for your approval. They are assigned to ${warehouseName}.`,
           metadata: {
             pendingUserId: user.id,
             pendingUserRole: user.role,
@@ -930,17 +946,11 @@ export class AuthService {
 
     const [territories, warehouses] = await Promise.all([
       this.territoriesRepository.find({
-        order: {
-          name: 'ASC',
-        },
+        order: { name: 'ASC' },
       }),
       this.warehousesRepository.find({
-        relations: {
-          territory: true,
-        },
-        order: {
-          name: 'ASC',
-        },
+        relations: { territory: true },
+        order: { name: 'ASC' },
       }),
     ]);
 
@@ -950,12 +960,7 @@ export class AuthService {
       warehouses.filter(
         (warehouse) =>
           warehouse.latitude !== null && warehouse.longitude !== null,
-      ) as Array<
-        Warehouse & {
-          latitude: number;
-          longitude: number;
-        }
-      >,
+      ) as Array<Warehouse & { latitude: number; longitude: number }>,
     );
     const nearestTerritory = findNearestLocation(latitude, longitude, territories);
 
@@ -971,10 +976,7 @@ export class AuthService {
       });
     }
 
-    return {
-      territory,
-      warehouse,
-    };
+    return { territory, warehouse };
   }
 
   private generateOtpCode() {

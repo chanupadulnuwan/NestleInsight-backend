@@ -5,9 +5,14 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ActivityModule } from './activity/activity.module';
 import { AuthModule } from './auth/auth.module';
 import { CategoriesModule } from './categories/categories.module';
+import { DailyReportsModule } from './daily-reports/daily-reports.module';
 import { DeliveryAssignmentsModule } from './delivery-assignments/delivery-assignments.module';
 import { OrdersModule } from './orders/orders.module';
+import { OutletsModule } from './outlets/outlets.module';
 import { ProductsModule } from './products/products.module';
+import { SalesIncidentsModule } from './sales-incidents/sales-incidents.module';
+import { SalesRoutesModule } from './sales-routes/sales-routes.module';
+import { StoreVisitsModule } from './store-visits/store-visits.module';
 import { TerritoriesModule } from './territories/territories.module';
 import { UsersModule } from './users/users.module';
 import { WarehousesModule } from './warehouses/warehouses.module';
@@ -37,11 +42,17 @@ import { WarehousesModule } from './warehouses/warehouses.module';
     ActivityModule,
     AuthModule,
     CategoriesModule,
+    DailyReportsModule,
     DeliveryAssignmentsModule,
     OrdersModule,
+    OutletsModule,
     ProductsModule,
+    SalesIncidentsModule,
+    SalesRoutesModule,
+    StoreVisitsModule,
     TerritoriesModule,
     UsersModule,
+    WarehousesModule,
     WarehousesModule,
   ],
 })
