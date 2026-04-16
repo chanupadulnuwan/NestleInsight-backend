@@ -10,12 +10,15 @@ import { DeliveryAssignmentsModule } from './delivery-assignments/delivery-assig
 import { OrdersModule } from './orders/orders.module';
 import { OutletsModule } from './outlets/outlets.module';
 import { ProductsModule } from './products/products.module';
+import { PromotionsModule } from './promotions/promotions.module';
 import { SalesIncidentsModule } from './sales-incidents/sales-incidents.module';
 import { SalesRoutesModule } from './sales-routes/sales-routes.module';
 import { StoreVisitsModule } from './store-visits/store-visits.module';
 import { TerritoriesModule } from './territories/territories.module';
 import { UsersModule } from './users/users.module';
 import { WarehousesModule } from './warehouses/warehouses.module';
+import { SmartRouteModule } from './smart-route/smart-route.module';
+import { FieldMonitoringModule } from './field-monitoring/field-monitoring.module';
 
 @Module({
   imports: [
@@ -47,6 +50,7 @@ import { WarehousesModule } from './warehouses/warehouses.module';
     OrdersModule,
     OutletsModule,
     ProductsModule,
+    PromotionsModule,
     SalesIncidentsModule,
     SalesRoutesModule,
     StoreVisitsModule,
@@ -54,6 +58,8 @@ import { WarehousesModule } from './warehouses/warehouses.module';
     UsersModule,
     WarehousesModule,
     WarehousesModule,
+    SmartRouteModule,
+    FieldMonitoringModule,
   ],
 })
 export class AppModule {}

@@ -8,6 +8,7 @@ import { Role } from '../common/enums/role.enum';
 import { Product } from '../products/entities/product.entity';
 import { UsersService } from '../users/users.service';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { CreateSalesOrderDto } from './dto/create-sales-order.dto';
 import { Order } from './entities/order.entity';
 import {
   createAutomaticDelayPatch,
@@ -24,7 +25,7 @@ export class OrdersService {
     private readonly productsRepository: Repository<Product>,
     private readonly usersService: UsersService,
     private readonly activityService: ActivityService,
-  ) {}
+  ) { }
 
   async createCurrentUserOrder(userId: string, createOrderDto: CreateOrderDto) {
     const user = await this.requireShopOwner(userId);
@@ -144,6 +145,110 @@ export class OrdersService {
         ? 'latest order fetched successfully'
         : 'no previous order found',
       order: latestOrder ? this.serializeOrder(latestOrder) : null,
+    };
+  }
+
+  async createSalesRepOrder(
+    salesRepId: string,
+    dto: CreateSalesOrderDto,
+  ) {
+    const user = await this.usersService.findById(salesRepId);
+
+    if (!user) {
+      throw new BadRequestException('sales rep account was not found');
+    }
+
+    if (user.role !== Role.SALES_REP) {
+      throw new BadRequestException(
+        'only sales rep accounts can place sales orders',
+      );
+    }
+
+    // Validate items array
+    if (!dto.items || dto.items.length === 0) {
+      throw new BadRequestException('Order must contain at least one item.');
+    }
+
+    const productIds = [
+      ...new Set(dto.items.map((item) => item.productId)),
+    ];
+    const products = await this.productsRepository.find({
+      where: {
+        id: In(productIds),
+      },
+    });
+    const productsById = new Map(
+      products.map((product) => [product.id, product]),
+    );
+
+    const normalizedItems = dto.items.map((item) => {
+      const product = productsById.get(item.productId);
+
+      if (!product || product.status !== ProductStatus.ACTIVE) {
+        throw new BadRequestException({
+          message: 'One or more selected products are currently unavailable.',
+          code: 'PRODUCT_CURRENTLY_UNAVAILABLE',
+        });
+      }
+
+      return {
+        productId: item.productId,
+        skuSnapshot: product.sku,
+        productNameSnapshot: product.productName,
+        packSizeSnapshot: product.packSize,
+        imageUrlSnapshot: product.imageUrl,
+        casePriceSnapshot: product.casePrice,
+        quantity: item.quantity,
+        lineTotal: Number((product.casePrice * item.quantity).toFixed(2)),
+        product,
+      };
+    });
+
+    // Create order with sales rep specific data
+    const orderCode = `SR-${Date.now()}`;
+    const order = this.ordersRepository.create({
+      orderCode,
+      userId: salesRepId,
+      shopNameSnapshot: `Shop at ${dto.shopId}`,
+      territoryId: user.territoryId ?? null,
+      warehouseId: user.warehouseId ?? null,
+      status: 'PLACED',
+      currencyCode: 'LKR',
+      totalAmount: normalizedItems.reduce((sum, item) => sum + item.lineTotal, 0),
+      placedAt: new Date(),
+      customerNote: `Sales route order - Route: ${dto.routeId}, Shop: ${dto.shopId}`,
+      items: normalizedItems.map((item) => ({
+        productId: item.productId,
+        skuSnapshot: item.skuSnapshot,
+        productNameSnapshot: item.productNameSnapshot,
+        packSizeSnapshot: item.packSizeSnapshot,
+        imageUrlSnapshot: item.imageUrlSnapshot,
+        casePriceSnapshot: item.casePriceSnapshot,
+        quantity: item.quantity,
+        lineTotal: item.lineTotal,
+        product: item.product,
+      } as any)),
+    });
+
+    const savedOrder = await this.ordersRepository.save(order);
+
+    // Log activity
+    await this.activityService.logForUser({
+      userId: salesRepId,
+      type: 'ORDER_PLACED',
+      title: 'Order placed',
+      message: `Order with ${dto.items.length} item(s) placed at shop ${dto.shopId}.`,
+      metadata: {
+        orderId: savedOrder.id,
+        routeId: dto.routeId,
+        shopId: dto.shopId,
+        itemCount: dto.items.length,
+      },
+    });
+
+    return {
+      message: 'Sales order placed successfully.',
+      order: this.serializeOrder(savedOrder),
     };
   }
 

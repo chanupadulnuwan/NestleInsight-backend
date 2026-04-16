@@ -10,7 +10,7 @@ import { ActivityService } from './activity.service';
 
 @Controller('activities')
 export class ActivityController {
-  constructor(private readonly activityService: ActivityService) {}
+  constructor(private readonly activityService: ActivityService) { }
 
   @UseGuards(JwtAuthGuard)
   @Get()
@@ -49,11 +49,11 @@ export class ActivityController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.TERRITORY_DISTRIBUTOR, Role.REGIONAL_MANAGER)
+  @Roles(Role.TERRITORY_DISTRIBUTOR, Role.REGIONAL_MANAGER, Role.SALES_REP) // 👈 ADDED SALES_REP
   @Get('feedback/my-territory')
   getMyTerritoryOrderFeedback(@Req() req: any) {
     const { territoryId } = req.user as { territoryId: string | null };
-    
+
     if (!territoryId) {
       return [];
     }
@@ -62,11 +62,11 @@ export class ActivityController {
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.TERRITORY_DISTRIBUTOR, Role.REGIONAL_MANAGER)
+  @Roles(Role.TERRITORY_DISTRIBUTOR, Role.REGIONAL_MANAGER, Role.SALES_REP) // 👈 ADDED SALES_REP
   @Get('text-feedback/my-territory')
   getMyTerritoryTextFeedback(@Req() req: any) {
     const { territoryId } = req.user as { territoryId: string | null };
-    
+
     if (!territoryId) {
       return [];
     }

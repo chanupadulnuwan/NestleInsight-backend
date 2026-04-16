@@ -38,6 +38,7 @@ export class DailyReportsService {
       incidentSummaryJson: null,
     } as any);
 
+      
     const savedReport: any = await this.reportsRepo.save(report);
 
     await this.activityService.logForUser({
@@ -53,6 +54,14 @@ export class DailyReportsService {
     });
 
     return savedReport;
+  }
+
+  async getMyReports(salesRepId: string): Promise<DailyReport[]> {
+    return this.reportsRepo.find({
+      where: { salesRepId },
+      order: { reportDate: 'DESC' },
+      take: 30,
+    });
   }
 
   async getReports(

@@ -83,6 +83,21 @@ export class Order {
   @Column({ name: 'assignment_id', type: 'uuid', nullable: true })
   assignmentId: string | null;
 
+  @Column({ name: 'applied_promotion_id', type: 'uuid', nullable: true })
+  appliedPromotionId: string | null;
+
+  @Column({ name: 'applied_promotion_code', type: 'varchar', length: 50, nullable: true })
+  appliedPromotionCode: string | null;
+
+  @Column({ name: 'subtotal_before_discount', type: 'decimal', precision: 12, scale: 2, nullable: true })
+  subtotalBeforeDiscount: number | null;
+
+  @Column({ name: 'promotion_discount_total', type: 'decimal', precision: 12, scale: 2, nullable: true })
+  promotionDiscountTotal: number | null;
+
+  @Column({ name: 'total_after_discount', type: 'decimal', precision: 12, scale: 2, nullable: true })
+  totalAfterDiscount: number | null;
+
   @OneToMany(() => OrderItem, (item) => item.order, {
     cascade: true,
     eager: true,

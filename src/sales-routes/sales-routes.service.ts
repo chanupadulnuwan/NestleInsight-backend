@@ -14,6 +14,7 @@ import { UsersService } from '../users/users.service';
 import { ApproveLoadRequestDto, LoadRequestDecision } from './dto/approve-load-request.dto';
 import { CloseRouteDto } from './dto/close-route.dto';
 import { CreateRouteDto } from './dto/create-route.dto';
+import { LogReturnItemDto } from './dto/log-return-item.dto';
 import { EnterPinDto } from './dto/enter-pin.dto';
 import { SubmitLoadRequestDto } from './dto/submit-load-request.dto';
 import {
@@ -407,6 +408,37 @@ export class SalesRoutesService {
       message: 'Route started successfully.',
       route: savedRoute,
     };
+  }
+
+  async logReturnItem(routeId: string, salesRepId: string, dto: LogReturnItemDto) {
+    const route = await this.requireOwnedRoute(routeId, salesRepId);
+
+    if (route.status !== SalesRouteStatus.IN_PROGRESS) {
+      throw new BadRequestException('Route must be IN_PROGRESS to log returns.');
+    }
+
+    // Append to existing returnItemsJson or create new array
+    const existing: any[] = (route as any).returnItemsJson ?? [];
+    existing.push({
+      productId: dto.productId,
+      productName: dto.productName,
+      quantityCases: dto.quantityCases,
+      reason: dto.reason,
+      notes: dto.notes ?? null,
+      loggedAt: new Date().toISOString(),
+    });
+
+    await this.salesRoutesRepo.update(routeId, { returnItemsJson: existing } as any);
+
+    await this.activityService.logForUser({
+      userId: salesRepId,
+      type: 'RETURN_ITEM_LOGGED',
+      title: 'Return item logged',
+      message: `${dto.quantityCases} case(s) of "${dto.productName}" logged for return.`,
+      metadata: { routeId, productId: dto.productId, quantityCases: dto.quantityCases },
+    });
+
+    return { message: 'Return item logged successfully.', routeId };
   }
 
   async closeRoute(routeId: string, salesRepId: string, dto: CloseRouteDto) {

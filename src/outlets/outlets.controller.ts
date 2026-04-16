@@ -29,6 +29,13 @@ export class OutletsController {
     return this.outletsService.createOutlet(req.user?.userId, dto);
   }
 
+  @Get('my-territory')
+  @UseGuards(RolesGuard)
+  @Roles(Role.SALES_REP)
+  getMyTerritoryOutlets(@Req() req: any) {
+    return this.outletsService.getMyTerritoryOutlets(req.user?.userId, req.user?.territoryId);
+  }
+
   @Get('pending')
   @UseGuards(RolesGuard)
   @Roles(Role.REGIONAL_MANAGER)

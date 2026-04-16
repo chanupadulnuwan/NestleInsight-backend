@@ -5,29 +5,44 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../common/enums/role.enum';
 import { CreateOrderDto } from './dto/create-order.dto';
+import { CreateSalesOrderDto } from './dto/create-sales-order.dto';
 import { OrdersService } from './orders.service';
 
 @Controller('orders')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(Role.SHOP_OWNER)
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
   @Get()
+  @Roles(Role.SHOP_OWNER)
   listMyOrders(@Req() req: any) {
     return this.ordersService.listCurrentUserOrders(req.user?.userId);
   }
 
   @Get('latest')
+  @Roles(Role.SHOP_OWNER)
   getLatestOrder(@Req() req: any) {
     return this.ordersService.getLatestCurrentUserOrder(req.user?.userId);
   }
 
   @Post()
+  @Roles(Role.SHOP_OWNER)
   createOrder(@Req() req: any, @Body() createOrderDto: CreateOrderDto) {
     return this.ordersService.createCurrentUserOrder(
       req.user?.userId,
       createOrderDto,
+    );
+  }
+
+  @Post('sales-rep')
+  @Roles(Role.SALES_REP)
+  createSalesRepOrder(
+    @Req() req: any,
+    @Body() createSalesOrderDto: CreateSalesOrderDto,
+  ) {
+    return this.ordersService.createSalesRepOrder(
+      req.user?.userId,
+      createSalesOrderDto,
     );
   }
 }

@@ -18,13 +18,20 @@ import { DailyReportsService } from './daily-reports.service';
 @Controller('daily-reports')
 @UseGuards(JwtAuthGuard)
 export class DailyReportsController {
-  constructor(private readonly reportsService: DailyReportsService) {}
+  constructor(private readonly reportsService: DailyReportsService) { }
 
   @Post('generate')
   @UseGuards(RolesGuard)
   @Roles(Role.SALES_REP)
   generateReport(@Req() req: any, @Body() dto: GenerateReportDto) {
     return this.reportsService.generateReport(req.user?.userId, dto);
+  }
+
+  @Get('my')
+  @UseGuards(RolesGuard)
+  @Roles(Role.SALES_REP)
+  getMyReports(@Req() req: any) {
+    return this.reportsService.getMyReports(req.user?.userId);
   }
 
   @Get()

@@ -77,6 +77,9 @@ export class SalesRoute {
   @Column({ name: 'variance_json', type: 'jsonb', nullable: true })
   varianceJson: Record<string, unknown>[] | null;
 
+  @Column({ name: 'return_items_json', type: 'jsonb', nullable: true, default: null })
+  returnItemsJson: any[] | null;
+
   @Column({ name: 'started_at', type: 'timestamp', nullable: true })
   startedAt: Date | null;
 

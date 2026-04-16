@@ -31,9 +31,18 @@ export class SpaFallbackFilter implements ExceptionFilter {
     const isBrowserNav =
       accept.includes('text/html') && !accept.startsWith('application/json');
 
+    // Prevent SPA fallback for API routes even if Accept header contains text/html
+    const apiPrefixes = [
+      '/auth', '/users', '/territories', '/warehouses', '/outlets', 
+      '/orders', '/sales-routes', '/smart-route', '/daily-reports', 
+      '/sales-incidents', '/delivery-assignments', '/promotions', '/activities'
+    ];
+    const isApiRoute = apiPrefixes.some(prefix => req.path.toLowerCase().startsWith(prefix));
+
     if (
       (status === 404 || status === 401 || status === 403) &&
       isBrowserNav &&
+      !isApiRoute &&
       existsSync(this.indexPath)
     ) {
       return res.sendFile(this.indexPath);

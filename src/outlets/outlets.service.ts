@@ -19,11 +19,12 @@ export class OutletsService {
     const outlet = this.outletsRepo.create({
       outletName: dto.outletName,
       ownerName: dto.ownerName,
-      ownerPhone: dto.ownerPhone,
-      ownerEmail: dto.ownerEmail,
-      address: dto.address,
+      ownerPhone: dto.contactNumber,
+      ownerEmail: dto.ownerEmail || null,
+      address: dto.address || null,
       latitude: dto.latitude,
       longitude: dto.longitude,
+      territoryId: dto.territoryId,
       status: OutletStatus.PENDING_APPROVAL,
       registeredBySalesRepId: userId,
     });
@@ -39,10 +40,22 @@ export class OutletsService {
         outletId: savedOutlet.id,
         outletName: savedOutlet.outletName,
         status: savedOutlet.status,
+        territoryId: savedOutlet.territoryId,
       },
     });
 
     return savedOutlet;
+  }
+
+  async getMyTerritoryOutlets(salesRepId: string, territoryId: string | null): Promise<Outlet[]> {
+    const where: any = { registeredBySalesRepId: salesRepId };
+    if (territoryId) {
+      where.territoryId = territoryId;
+    }
+    return this.outletsRepo.find({
+      where,
+      order: { createdAt: 'ASC' },
+    });
   }
 
   async getPendingOutlets(): Promise<Outlet[]> {

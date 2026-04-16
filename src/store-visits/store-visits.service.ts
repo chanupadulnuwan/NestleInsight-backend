@@ -6,6 +6,7 @@ import { ActivityService } from '../activity/activity.service';
 import { StoreVisit, StoreVisitStatus } from './entities/store-visit.entity';
 import { StartVisitDto } from './dto/start-visit.dto';
 import { CompleteVisitDto } from './dto/complete-visit.dto';
+import { CheckInVisitDto } from './dto/check-in-visit.dto';
 
 @Injectable()
 export class StoreVisitsService {
@@ -99,5 +100,35 @@ export class StoreVisitsService {
     });
 
     return updatedVisit;
+  }
+
+  async checkInVisit(
+    salesRepId: string,
+    dto: CheckInVisitDto,
+  ): Promise<StoreVisit> {
+    const storeVisit: any = this.storeVisitsRepo.create({
+      routeId: dto.routeId,
+      shopId: dto.shopId,
+      salesRepId,
+      status: StoreVisitStatus.IN_PROGRESS,
+      visitStartedAt: new Date(),
+      visitNotes: dto.visitNotes || null,
+    } as any);
+
+    const savedVisit: any = await this.storeVisitsRepo.save(storeVisit);
+
+    await this.activityService.logForUser({
+      userId: salesRepId,
+      type: 'STORE_VISIT_CHECKED_IN',
+      title: 'Store Visit Checked In',
+      message: `Store visit at shop ${dto.shopId} has been checked in`,
+      metadata: {
+        visitId: savedVisit.id,
+        routeId: dto.routeId,
+        shopId: dto.shopId,
+      },
+    });
+
+    return savedVisit;
   }
 }

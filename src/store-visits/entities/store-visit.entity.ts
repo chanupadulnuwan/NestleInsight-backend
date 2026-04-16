@@ -41,6 +41,13 @@ export class StoreVisit {
   @JoinColumn({ name: 'route_id' })
   route: SalesRoute | null;
 
+  @Column({ name: 'route_session_id', type: 'uuid', nullable: true })
+  routeSessionId: string | null;
+
+  @Column({ name: 'stop_id', type: 'uuid', nullable: true })
+  stopId: string | null;
+
+
   @Column({ name: 'sales_rep_id', type: 'uuid' })
   salesRepId: string;
 
@@ -63,8 +70,17 @@ export class StoreVisit {
   @Column({ name: 'visit_ended_at', type: 'timestamp', nullable: true })
   visitEndedAt: Date | null;
 
+  @Column({ name: 'visit_start_time', type: 'timestamp', nullable: true })
+  visitStartTime: Date | null;
+
+  @Column({ name: 'visit_end_time', type: 'timestamp', nullable: true })
+  visitEndTime: Date | null;
+
   @Column({ name: 'duration_seconds', type: 'int', nullable: true })
   durationSeconds: number | null;
+
+  @Column({ name: 'duration_minutes', type: 'int', nullable: true })
+  durationMinutes: number | null;
 
   @Column({ name: 'shelf_stock_json', type: 'jsonb', nullable: true })
   shelfStockJson: StoreVisitStockLine[] | null;

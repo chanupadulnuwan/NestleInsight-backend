@@ -14,6 +14,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Role } from '../common/enums/role.enum';
 import { CompleteVisitDto } from './dto/complete-visit.dto';
 import { StartVisitDto } from './dto/start-visit.dto';
+import { CheckInVisitDto } from './dto/check-in-visit.dto';
 import { StoreVisitsService } from './store-visits.service';
 
 @Controller('store-visits')
@@ -26,6 +27,13 @@ export class StoreVisitsController {
   @Roles(Role.SALES_REP)
   startVisit(@Req() req: any, @Body() dto: StartVisitDto) {
     return this.storeVisitsService.startVisit(req.user?.userId, dto);
+  }
+
+  @Post('check-in')
+  @UseGuards(RolesGuard)
+  @Roles(Role.SALES_REP)
+  checkInVisit(@Req() req: any, @Body() dto: CheckInVisitDto) {
+    return this.storeVisitsService.checkInVisit(req.user?.userId, dto);
   }
 
   @Patch(':id/complete')

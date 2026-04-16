@@ -15,6 +15,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { Role } from '../common/enums/role.enum';
 import { ApproveLoadRequestDto } from './dto/approve-load-request.dto';
 import { CloseRouteDto } from './dto/close-route.dto';
+import { LogReturnItemDto } from './dto/log-return-item.dto';
 import { CreateRouteDto } from './dto/create-route.dto';
 import { EnterPinDto } from './dto/enter-pin.dto';
 import { SubmitLoadRequestDto } from './dto/submit-load-request.dto';
@@ -82,6 +83,17 @@ export class SalesRoutesController {
       req.user?.userId,
       dto,
     );
+  }
+
+  @Post(':id/log-return')
+  @UseGuards(RolesGuard)
+  @Roles(Role.SALES_REP)
+  logReturnItem(
+    @Param('id') routeId: string,
+    @Req() req: any,
+    @Body() dto: LogReturnItemDto,
+  ) {
+    return this.salesRoutesService.logReturnItem(routeId, req.user?.userId, dto);
   }
 
   @Post(':id/close')
