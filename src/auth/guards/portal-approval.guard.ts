@@ -27,16 +27,22 @@ export class PortalApprovalGuard implements CanActivate {
       throw new ForbiddenException('user not found in request');
     }
 
+    // 1. Admins bypass the approval guard
     if (sessionUser.role === Role.ADMIN) {
       return true;
     }
 
-    if (sessionUser.role !== Role.REGIONAL_MANAGER) {
-      throw new ForbiddenException(
-        'you do not have permission to access this resource',
-      );
+    // 2. Only enforce the strict portal approval check for management roles.
+    // Other roles (Sales Reps, Shop Owners, etc.) are handled by their respective RolesGuard checks.
+    const isManagerRole =
+      sessionUser.role === Role.REGIONAL_MANAGER ||
+      sessionUser.role === Role.TERRITORY_DISTRIBUTOR;
+
+    if (!isManagerRole) {
+      return true;
     }
 
+    // 3. For Management roles, ensure they are both ACTIVE and APPROVED by an admin.
     const user = await this.usersRepository.findOne({
       where: {
         id: sessionUser.userId,

@@ -7,6 +7,7 @@ import {
 } from 'typeorm';
 
 import { Promotion } from './promotion.entity';
+import { Product } from '../../products/entities/product.entity';
 
 @Entity('promotion_products')
 export class PromotionProduct {
@@ -22,4 +23,8 @@ export class PromotionProduct {
 
   @Column({ name: 'product_id', type: 'uuid' })
   productId: string;
+
+  @ManyToOne(() => Product, { onDelete: 'CASCADE' })
+  @JoinColumn({ name: 'product_id' })
+  product: Product;
 }

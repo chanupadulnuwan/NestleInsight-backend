@@ -3,6 +3,8 @@ import {
   ArrayMinSize,
   IsArray,
   IsInt,
+  IsNumber,
+  IsOptional,
   IsString,
   IsUUID,
   Max,
@@ -28,4 +30,17 @@ export class CreateOrderDto {
   @ValidateNested({ each: true })
   @Type(() => CreateOrderItemDto)
   items: CreateOrderItemDto[];
+
+  @IsString()
+  @IsUUID()
+  @IsOptional()
+  appliedPromotionId?: string;
+
+  @IsString()
+  @IsOptional()
+  appliedPromotionCode?: string;
+
+  @IsNumber()
+  @IsOptional()
+  discountAmount?: number;
 }

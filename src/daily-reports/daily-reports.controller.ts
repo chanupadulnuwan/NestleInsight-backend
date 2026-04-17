@@ -36,7 +36,7 @@ export class DailyReportsController {
 
   @Get()
   @UseGuards(RolesGuard)
-  @Roles(Role.REGIONAL_MANAGER)
+  @Roles(Role.REGIONAL_MANAGER, Role.TERRITORY_DISTRIBUTOR)
   getReports(
     @Query('territoryId') territoryId?: string,
     @Query('startDate') startDate?: string,

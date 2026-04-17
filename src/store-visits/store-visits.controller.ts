@@ -5,8 +5,11 @@ import {
   Patch,
   Post,
   Req,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -16,6 +19,7 @@ import { CompleteVisitDto } from './dto/complete-visit.dto';
 import { StartVisitDto } from './dto/start-visit.dto';
 import { CheckInVisitDto } from './dto/check-in-visit.dto';
 import { StoreVisitsService } from './store-visits.service';
+import { createVisitImageUploadOptions } from './visit-image.storage';
 
 @Controller('store-visits')
 @UseGuards(JwtAuthGuard)
@@ -45,5 +49,17 @@ export class StoreVisitsController {
     @Body() dto: CompleteVisitDto,
   ) {
     return this.storeVisitsService.completeVisit(visitId, req.user?.userId, dto);
+  }
+
+  @Post(':id/photos')
+  @UseGuards(RolesGuard)
+  @Roles(Role.SALES_REP)
+  @UseInterceptors(FileInterceptor('image', createVisitImageUploadOptions()))
+  uploadPhoto(
+    @Param('id') visitId: string,
+    @Req() req: any,
+    @UploadedFile() file: any,
+  ) {
+    return this.storeVisitsService.addPhotoToVisit(visitId, req.user?.userId, file.filename);
   }
 }

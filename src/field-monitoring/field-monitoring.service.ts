@@ -8,6 +8,7 @@ import { RoutePlanStop } from '../sales-routes/entities/route-plan-stop.entity';
 import { RouteSession } from '../sales-routes/entities/route-session.entity';
 import { RouteStopEvent } from '../sales-routes/entities/route-stop-event.entity';
 import { SalesRoute } from '../sales-routes/entities/sales-route.entity';
+import { StoreVisit } from '../store-visits/entities/store-visit.entity';
 import { User } from '../users/entities/user.entity';
 
 @Injectable()
@@ -33,6 +34,9 @@ export class FieldMonitoringService {
 
     @InjectRepository(SalesIncident)
     private readonly incidentRepo: Repository<SalesIncident>,
+
+    @InjectRepository(StoreVisit)
+    private readonly visitRepo: Repository<StoreVisit>,
   ) {}
 
   // ─── Team Overview ───────────────────────────────────────────────────────────
@@ -220,7 +224,7 @@ export class FieldMonitoringService {
             .getMany()
         : [];
 
-      routeTimeline = stops.map((stop) => {
+      routeTimeline = await Promise.all(stops.map(async (stop) => {
         const stopEvts = events.filter((e) => e.stopId === stop.id);
         const arrivedAt = stopEvts.find((e) => e.eventType === 'ARRIVED')?.eventTime ?? null;
         const completedAt =
@@ -237,6 +241,12 @@ export class FieldMonitoringService {
           );
         }
 
+        // Fetch visit data for photos
+        const visit = await this.visitRepo.findOne({
+          where: { stopId: stop.id },
+          select: ['photoUrls'],
+        });
+
         return {
           stopId: stop.id,
           sequence: stop.actualSeq ?? stop.suggestedSeq,
@@ -250,8 +260,9 @@ export class FieldMonitoringService {
           skippedAt,
           reasonCode:
             stopEvts.find((e) => e.reasonCode)?.reasonCode ?? null,
+          photoUrls: visit?.photoUrls ?? [],
         };
-      });
+      }));
 
       skipLog = routeTimeline
         .filter((s) => s.status === 'skipped' || s.skippedAt)

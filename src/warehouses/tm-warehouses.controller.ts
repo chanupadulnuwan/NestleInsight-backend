@@ -13,7 +13,7 @@ import {
 
 @Controller('tm/warehouse')
 @UseGuards(JwtAuthGuard, RolesGuard, PortalApprovalGuard)
-@Roles(Role.REGIONAL_MANAGER)
+@Roles(Role.REGIONAL_MANAGER, Role.TERRITORY_DISTRIBUTOR)
 export class TmWarehousesController {
   constructor(private readonly tmWarehousesService: TmWarehousesService) {}
 

@@ -11,7 +11,7 @@ import { TmOrdersService } from './tm-orders.service';
 
 @Controller('tm/orders')
 @UseGuards(JwtAuthGuard, RolesGuard, PortalApprovalGuard)
-@Roles(Role.REGIONAL_MANAGER)
+@Roles(Role.REGIONAL_MANAGER, Role.TERRITORY_DISTRIBUTOR)
 export class TmOrdersController {
   constructor(private readonly tmOrdersService: TmOrdersService) {}
 

@@ -3,6 +3,7 @@ import { FeedbackSubmission } from '../activity/entities/feedback-submission.ent
 import { Category } from '../categories/entities/category.entity';
 import { DailyReport } from '../daily-reports/entities/daily-report.entity';
 import { Outlet } from '../outlets/entities/outlet.entity';
+import { AssistedOrderRequest } from '../orders/entities/assisted-order-request.entity';
 import { OrderItem } from '../orders/entities/order-item.entity';
 import { Order } from '../orders/entities/order.entity';
 import { Product } from '../products/entities/product.entity';
@@ -23,6 +24,7 @@ export const databaseEntities = [
   Category,
   DailyReport,
   Outlet,
+  AssistedOrderRequest,
   Order,
   OrderItem,
   Product,

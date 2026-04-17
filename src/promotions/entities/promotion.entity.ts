@@ -4,7 +4,10 @@ import {
   Entity,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
+  OneToMany,
 } from 'typeorm';
+import { PromotionProduct } from './promotion-product.entity';
+import { PromotionTerritory } from './promotion-territory.entity';
 
 @Entity('promotions')
 export class Promotion {
@@ -58,4 +61,16 @@ export class Promotion {
 
   @UpdateDateColumn({ name: 'updated_at' })
   updatedAt: Date;
+
+  @OneToMany(() => PromotionProduct, (product) => product.promotion)
+  eligibleProducts: PromotionProduct[];
+
+  @OneToMany(() => PromotionTerritory, (territory) => territory.promotion)
+  eligibleTerritories: PromotionTerritory[];
+
+  // Virtual fields for API response
+  eligibleProductIds?: string[];
+  eligibleTerritoryIds?: string[];
+  eligibleProductNames?: string[];
+  eligibleProductsDetail?: any[];
 }

@@ -131,4 +131,40 @@ export class StoreVisitsService {
 
     return savedVisit;
   }
+
+  async addPhotoToVisit(
+    visitId: string,
+    userId: string,
+    filename: string,
+  ): Promise<StoreVisit> {
+    const visit = await this.storeVisitsRepo.findOne({ where: { id: visitId } });
+    if (!visit) {
+      throw new NotFoundException(`Store visit with id ${visitId} not found`);
+    }
+
+    if (visit.salesRepId !== userId) {
+      throw new BadRequestException('You can only add photos to your own visits');
+    }
+
+    const photoUrl = `/uploads/visits/${filename}`;
+    if (!visit.photoUrls) {
+      visit.photoUrls = [];
+    }
+    visit.photoUrls.push(photoUrl);
+
+    const updatedVisit = await this.storeVisitsRepo.save(visit);
+
+    await this.activityService.logForUser({
+      userId,
+      type: 'STORE_VISIT_PHOTO_ADDED',
+      title: 'Store Visit Photo Added',
+      message: `A shelving photo has been added to the visit at "${visit.shopNameSnapshot}"`,
+      metadata: {
+        visitId,
+        photoUrl,
+      },
+    });
+
+    return updatedVisit;
+  }
 }

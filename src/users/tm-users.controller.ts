@@ -13,7 +13,7 @@ class TmRejectUserDto {
 
 @Controller('tm/users')
 @UseGuards(JwtAuthGuard, RolesGuard, PortalApprovalGuard)
-@Roles(Role.REGIONAL_MANAGER)
+@Roles(Role.REGIONAL_MANAGER, Role.TERRITORY_DISTRIBUTOR)
 export class TmUsersController {
   constructor(private readonly tmUsersService: TmUsersService) {}
 

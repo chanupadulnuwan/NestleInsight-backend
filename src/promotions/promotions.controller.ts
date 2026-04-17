@@ -1,6 +1,7 @@
 import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards, Request } from '@nestjs/common';
 import { PromotionsService } from './promotions.service';
 import { CreatePromotionDto, UpdatePromotionDto } from './dto/promotions.dto';
+import { ValidatePromotionDto } from './dto/validate-promotion.dto';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
@@ -10,7 +11,14 @@ import { Role } from '../common/enums/role.enum';
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class PromotionsController {
   constructor(private readonly promotionsService: PromotionsService) {}
-@Post()
+
+  @Post('validate')
+  @Roles(Role.ADMIN, Role.REGIONAL_MANAGER, Role.TERRITORY_DISTRIBUTOR, Role.SALES_REP, Role.SHOP_OWNER)
+  validatePromotion(@Body() dto: ValidatePromotionDto) {
+    return this.promotionsService.validatePromotion(dto);
+  }
+
+  @Post()
   create(@Body() createPromotionDto: CreatePromotionDto) {
     // 🔥 Just pass the DTO. Remove the 'req.user.id'
     return this.promotionsService.create(createPromotionDto);
@@ -23,7 +31,7 @@ export class PromotionsController {
   }
 
   @Get('active')
-  @Roles(Role.ADMIN, Role.REGIONAL_MANAGER, Role.TERRITORY_DISTRIBUTOR, Role.SALES_REP)
+  @Roles(Role.ADMIN, Role.REGIONAL_MANAGER, Role.TERRITORY_DISTRIBUTOR, Role.SALES_REP, Role.SHOP_OWNER)
   findActive(@Query('territoryId') territoryId?: string) {
     return this.promotionsService.findActive(territoryId);
   }

@@ -57,7 +57,7 @@ export class SalesRoutesController {
 
   @Patch('load-requests/:id/review')
   @UseGuards(RolesGuard)
-  @Roles(Role.REGIONAL_MANAGER)
+  @Roles(Role.REGIONAL_MANAGER, Role.TERRITORY_DISTRIBUTOR)
   approveLoadRequest(
     @Param('id') loadRequestId: string,
     @Req() req: any,

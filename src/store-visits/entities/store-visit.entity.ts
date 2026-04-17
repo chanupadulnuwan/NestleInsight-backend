@@ -111,6 +111,13 @@ export class StoreVisit {
   estimatedSellThroughJson: Record<string, unknown>[] | null;
 
   @Column({
+    type: 'jsonb',
+    nullable: true,
+    name: 'photo_urls',
+  })
+  photoUrls: string[] | null;
+
+  @Column({
     type: 'varchar',
     length: 30,
     default: StoreVisitStatus.IN_PROGRESS,
