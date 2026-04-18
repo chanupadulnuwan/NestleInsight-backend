@@ -328,7 +328,7 @@ export class TmOrdersService {
   }
 
   private ensureProcessableOrder(order: Order) {
-    if (order.status !== 'PLACED') {
+    if (!['PLACED', 'CONFIRMED'].includes(order.status)) {
       throw new BadRequestException(
         `Order is in "${order.status}" status and cannot be processed from approvals.`,
       );

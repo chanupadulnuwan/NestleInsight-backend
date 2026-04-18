@@ -55,6 +55,13 @@ export class SalesRoutesController {
     return this.salesRoutesService.getMyRoute(req.user?.userId);
   }
 
+  @Get('my/latest')
+  @UseGuards(RolesGuard)
+  @Roles(Role.SALES_REP)
+  getMyLatestRoute(@Req() req: any) {
+    return this.salesRoutesService.getLatestRoute(req.user?.userId);
+  }
+
   @Patch('load-requests/:id/review')
   @UseGuards(RolesGuard)
   @Roles(Role.REGIONAL_MANAGER, Role.TERRITORY_DISTRIBUTOR)

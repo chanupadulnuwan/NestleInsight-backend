@@ -1,7 +1,10 @@
-import { Matches, MaxLength, MinLength } from 'class-validator';
+import { IsUUID, Matches, MaxLength, MinLength } from 'class-validator';
 
 export class ConfirmAssistedOrderPinDto {
-  @Matches(/^\d{6}$/, { message: 'pin must be a 6-digit number' })
+  @IsUUID()
+  orderId: string;
+
+  @Matches(/^\d{4}$/, { message: 'pin must be a 4-digit number' })
   pin: string;
 
   @MinLength(5, {

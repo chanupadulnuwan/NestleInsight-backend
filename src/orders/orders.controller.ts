@@ -1,4 +1,3 @@
-import { Param } from '@nestjs/common';
 import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -49,26 +48,21 @@ export class OrdersController {
     );
   }
 
-  @Post('sales-rep/request-pin')
+  @Post('rep-request')
   @Roles(Role.SALES_REP)
-  requestSalesRepOrderPin(
+  requestSalesRepOrder(
     @Req() req: any,
     @Body() dto: RequestAssistedOrderPinDto,
   ) {
-    return this.ordersService.requestSalesRepOrderPin(req.user?.userId, dto);
+    return this.ordersService.requestSalesRepOrder(req.user?.userId, dto);
   }
 
-  @Post('sales-rep/:requestId/confirm-pin')
+  @Post('rep-confirm')
   @Roles(Role.SALES_REP)
-  confirmSalesRepOrderPin(
+  confirmSalesRepOrder(
     @Req() req: any,
-    @Param('requestId') requestId: string,
     @Body() dto: ConfirmAssistedOrderPinDto,
   ) {
-    return this.ordersService.confirmSalesRepOrderPin(
-      req.user?.userId,
-      requestId,
-      dto,
-    );
+    return this.ordersService.confirmSalesRepOrder(req.user?.userId, dto);
   }
 }

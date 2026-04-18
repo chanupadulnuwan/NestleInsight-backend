@@ -7,11 +7,9 @@ import { PortalApprovalGuard } from '../auth/guards/portal-approval.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Outlet } from '../outlets/entities/outlet.entity';
 import { Product } from '../products/entities/product.entity';
-import { SalesRoute } from '../sales-routes/entities/sales-route.entity';
 import { User } from '../users/entities/user.entity';
 import { UsersModule } from '../users/users.module';
 import { WarehouseInventoryItem } from '../warehouses/entities/warehouse-inventory-item.entity';
-import { AssistedOrderRequest } from './entities/assisted-order-request.entity';
 import { OrderItem } from './entities/order-item.entity';
 import { Order } from './entities/order.entity';
 import { OrdersController } from './orders.controller';
@@ -22,12 +20,10 @@ import { TmOrdersService } from './tm-orders.service';
 @Module({
   imports: [
     TypeOrmModule.forFeature([
-      AssistedOrderRequest,
       Order,
       OrderItem,
       Outlet,
       Product,
-      SalesRoute,
       User,
       WarehouseInventoryItem,
     ]),

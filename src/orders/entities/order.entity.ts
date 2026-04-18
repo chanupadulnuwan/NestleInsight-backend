@@ -49,6 +49,25 @@ export class Order {
   @Column({ type: 'varchar', length: 30, default: 'PLACED' })
   status: string;
 
+  @Column({ type: 'varchar', length: 30, default: 'SHOP_OWNER' })
+  source: string;
+
+  @Column({
+    name: 'assisted_reason',
+    type: 'varchar',
+    length: 250,
+    nullable: true,
+  })
+  assistedReason: string | null;
+
+  @Column({
+    name: 'confirmation_pin',
+    type: 'varchar',
+    length: 10,
+    nullable: true,
+  })
+  confirmationPin: string | null;
+
   @Column({ name: 'currency_code', type: 'varchar', length: 10, default: 'LKR' })
   currencyCode: string;
 

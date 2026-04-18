@@ -224,6 +224,37 @@ export class SalesRoutesService {
     };
   }
 
+  async getLatestRoute(salesRepId: string) {
+    const latestRoute = await this.salesRoutesRepo
+      .createQueryBuilder('route')
+      .leftJoinAndSelect('route.salesRep', 'salesRep')
+      .leftJoinAndSelect('route.warehouse', 'warehouse')
+      .leftJoinAndSelect('route.vehicle', 'vehicle')
+      .leftJoinAndSelect('route.territory', 'territory')
+      .where('route.sales_rep_id = :salesRepId', { salesRepId })
+      .orderBy('route.created_at', 'DESC')
+      .getOne();
+
+    if (!latestRoute) {
+      return {
+        message: 'No route found.',
+        route: null,
+        loadRequest: null,
+      };
+    }
+
+    const loadRequest = await this.vanLoadRequestsRepo.findOne({
+      where: { routeId: latestRoute.id },
+      order: { createdAt: 'DESC' },
+    });
+
+    return {
+      message: 'Latest route fetched successfully.',
+      route: latestRoute,
+      loadRequest,
+    };
+  }
+
   async approveLoadRequest(
     loadRequestId: string,
     managerId: string,

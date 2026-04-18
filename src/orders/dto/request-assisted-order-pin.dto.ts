@@ -22,9 +22,6 @@ export class RequestAssistedOrderPinItemDto {
 
 export class RequestAssistedOrderPinDto {
   @IsUUID()
-  routeId: string;
-
-  @IsUUID()
   shopId: string;
 
   @IsArray()

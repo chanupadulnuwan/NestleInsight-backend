@@ -1,0 +1,8 @@
+BEGIN;
+
+ALTER TABLE orders
+ADD COLUMN IF NOT EXISTS source varchar(30) NOT NULL DEFAULT 'SHOP_OWNER',
+ADD COLUMN IF NOT EXISTS assisted_reason varchar(250),
+ADD COLUMN IF NOT EXISTS confirmation_pin varchar(10);
+
+COMMIT;

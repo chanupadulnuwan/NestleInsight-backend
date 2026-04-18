@@ -24,11 +24,27 @@ export class SmartRouteController {
 
   @Get('next-stop')
   async getNextStop(
+    @Request() req,
     @Query('sessionId') sessionId: string,
     @Query('lat') lat?: number,
     @Query('lng') lng?: number,
   ) {
-    return this.smartRouteService.getNextStop(sessionId, lat ? Number(lat) : undefined, lng ? Number(lng) : undefined);
+    const userId = req.user?.userId || req.user?.id;
+    return this.smartRouteService.getNextStop(
+      sessionId,
+      userId,
+      lat ? Number(lat) : undefined,
+      lng ? Number(lng) : undefined,
+    );
+  }
+
+  @Get('progress')
+  async getProgress(
+    @Request() req,
+    @Query('sessionId') sessionId: string,
+  ) {
+    const userId = req.user?.userId || req.user?.id;
+    return this.smartRouteService.getProgress(sessionId, userId);
   }
 
   @Post('skip')
