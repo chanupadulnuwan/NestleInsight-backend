@@ -4,10 +4,13 @@ import {
   Entity,
   JoinColumn,
   ManyToOne,
+  OneToMany,
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
 
+import { RouteApprovalRequest } from './route-approval-request.entity';
+import { RouteBeatPlanItem } from './route-beat-plan-item.entity';
 import { Territory } from '../../territories/entities/territory.entity';
 import { User } from '../../users/entities/user.entity';
 import { Vehicle } from '../../vehicles/entities/vehicle.entity';
@@ -80,6 +83,9 @@ export class SalesRoute {
   @Column({ name: 'return_items_json', type: 'jsonb', nullable: true, default: null })
   returnItemsJson: any[] | null;
 
+  @Column({ name: 'delivery_order_ids_json', type: 'jsonb', nullable: true, default: null })
+  deliveryOrderIdsJson: string[] | null;
+
   @Column({ name: 'started_at', type: 'timestamp', nullable: true })
   startedAt: Date | null;
 
@@ -96,6 +102,12 @@ export class SalesRoute {
 
   @Column({ name: 'pin_expires_at', type: 'timestamp', nullable: true })
   pinExpiresAt: Date | null;
+
+  @OneToMany(() => RouteBeatPlanItem, (item) => item.route)
+  beatPlanItems: RouteBeatPlanItem[];
+
+  @OneToMany(() => RouteApprovalRequest, (request) => request.route)
+  approvalRequests: RouteApprovalRequest[];
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

@@ -19,6 +19,12 @@ export class ActivityController {
   }
 
   @UseGuards(JwtAuthGuard)
+  @Get('my')
+  getMyActivityExplicit(@Req() req: any) {
+    return this.getMyActivity(req);
+  }
+
+  @UseGuards(JwtAuthGuard)
   @Post('feedback')
   submitFeedback(@Req() req: any, @Body() submitFeedbackDto: SubmitFeedbackDto) {
     return this.activityService.submitFeedbackForUser(

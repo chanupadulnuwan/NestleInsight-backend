@@ -1,10 +1,9 @@
-import { IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsString, IsUUID } from 'class-validator';
 
 export class CreateRouteDto {
-  @IsString() // Changed this from @IsUUID() to @IsString()
+  @IsString()
   warehouseId!: string;
 
   @IsUUID()
-  @IsOptional()
-  vehicleId?: string;
+  vehicleId!: string;
 }

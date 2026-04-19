@@ -110,6 +110,15 @@ export class StoreVisit {
   })
   estimatedSellThroughJson: Record<string, unknown>[] | null;
 
+  @Column({ name: 'suggested_order_json', type: 'jsonb', nullable: true })
+  suggestedOrderJson: Record<string, unknown> | null;
+
+  @Column({ name: 'last_order_date_snapshot', type: 'timestamp', nullable: true })
+  lastOrderDateSnapshot: Date | null;
+
+  @Column({ name: 'has_pending_delivery', type: 'boolean', default: false })
+  hasPendingDelivery: boolean;
+
   @Column({
     type: 'jsonb',
     nullable: true,

@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { DailyReport } from '../daily-reports/entities/daily-report.entity';
+import { Outlet } from '../outlets/entities/outlet.entity';
 import { SalesIncident } from '../sales-incidents/entities/sales-incident.entity';
 import { RoutePlanStop } from '../sales-routes/entities/route-plan-stop.entity';
 import { RouteSession } from '../sales-routes/entities/route-session.entity';
@@ -21,6 +22,7 @@ import { FieldMonitoringService } from './field-monitoring.service';
       RoutePlanStop,
       RouteStopEvent,
       DailyReport,
+      Outlet,
       SalesIncident,
       StoreVisit,
     ]),

@@ -1,11 +1,18 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
 import { ActivityService } from '../activity/activity.service';
-import { Outlet, OutletStatus } from './entities/outlet.entity';
 import { CreateOutletDto } from './dto/create-outlet.dto';
 import { ReviewOutletDto } from './dto/review-outlet.dto';
+import { Outlet, OutletStatus } from './entities/outlet.entity';
+
+type CreateOutletInput = {
+  userId: string;
+  territoryId?: string | null;
+  warehouseId?: string | null;
+  dto: CreateOutletDto;
+};
 
 @Injectable()
 export class OutletsService {
@@ -15,7 +22,21 @@ export class OutletsService {
     private readonly activityService: ActivityService,
   ) {}
 
-  async createOutlet(userId: string, dto: CreateOutletDto): Promise<Outlet> {
+  async createOutlet({
+    userId,
+    territoryId,
+    warehouseId,
+    dto,
+  }: CreateOutletInput): Promise<Outlet> {
+    const resolvedTerritoryId =
+      territoryId?.trim() || dto.territoryId?.trim() || null;
+
+    if (!resolvedTerritoryId) {
+      throw new BadRequestException(
+        'No territory is assigned to this sales rep account.',
+      );
+    }
+
     const outlet = this.outletsRepo.create({
       outletName: dto.outletName,
       ownerName: dto.ownerName,
@@ -24,7 +45,8 @@ export class OutletsService {
       address: dto.address || null,
       latitude: dto.latitude,
       longitude: dto.longitude,
-      territoryId: dto.territoryId,
+      territoryId: resolvedTerritoryId,
+      warehouseId: warehouseId?.trim() || null,
       status: OutletStatus.PENDING_APPROVAL,
       registeredBySalesRepId: userId,
     });
@@ -41,13 +63,17 @@ export class OutletsService {
         outletName: savedOutlet.outletName,
         status: savedOutlet.status,
         territoryId: savedOutlet.territoryId,
+        warehouseId: savedOutlet.warehouseId,
       },
     });
 
     return savedOutlet;
   }
 
-  async getMyTerritoryOutlets(salesRepId: string, territoryId: string | null): Promise<Outlet[]> {
+  async getMyTerritoryOutlets(
+    salesRepId: string,
+    territoryId: string | null,
+  ): Promise<Outlet[]> {
     const where: any = { registeredBySalesRepId: salesRepId };
     if (territoryId) {
       where.territoryId = territoryId;
@@ -82,7 +108,9 @@ export class OutletsService {
     }
 
     const newStatus =
-      dto.decision === 'APPROVED' ? OutletStatus.APPROVED : OutletStatus.REJECTED;
+      dto.decision === 'APPROVED'
+        ? OutletStatus.APPROVED
+        : OutletStatus.REJECTED;
 
     outlet.status = newStatus;
     outlet.reviewedBy = userId;
@@ -93,23 +121,29 @@ export class OutletsService {
 
     const updatedOutlet = await this.outletsRepo.save(outlet);
 
-    const activityMessage =
-      dto.decision === 'APPROVED'
-        ? `Outlet "${outlet.outletName}" has been approved`
-        : `Outlet "${outlet.outletName}" has been rejected`;
+    // IMPORTANT: Log activity for the Sales Rep who registered the outlet,
+    // NOT for the Administrator/RM who performed the review.
+    const targetUserId = outlet.registeredBySalesRepId;
 
-    await this.activityService.logForUser({
-      userId,
-      type: `OUTLET_${dto.decision}`,
-      title: `Outlet ${dto.decision}`,
-      message: activityMessage,
-      metadata: {
-        outletId: updatedOutlet.id,
-        outletName: updatedOutlet.outletName,
-        decision: dto.decision,
-        rejectionReason: updatedOutlet.rejectionReason,
-      },
-    });
+    if (targetUserId) {
+      const activityMessage =
+        dto.decision === 'APPROVED'
+          ? `Outlet "${outlet.outletName}" has been approved. It is now active for visits.`
+          : `Outlet "${outlet.outletName}" has been declined. Reason: ${updatedOutlet.rejectionReason || 'No reason provided'}`;
+
+      await this.activityService.logForUser({
+        userId: targetUserId,
+        type: `OUTLET_${dto.decision}`,
+        title: `Outlet Registration ${dto.decision === 'APPROVED' ? 'Approved' : 'Declined'}`,
+        message: activityMessage,
+        metadata: {
+          outletId: updatedOutlet.id,
+          outletName: updatedOutlet.outletName,
+          decision: dto.decision,
+          rejectionReason: updatedOutlet.rejectionReason,
+        },
+      });
+    }
 
     return updatedOutlet;
   }

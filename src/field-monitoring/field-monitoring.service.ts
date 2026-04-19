@@ -3,6 +3,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Between, Repository } from 'typeorm';
 
 import { DailyReport } from '../daily-reports/entities/daily-report.entity';
+import { Outlet } from '../outlets/entities/outlet.entity';
 import { SalesIncident } from '../sales-incidents/entities/sales-incident.entity';
 import { RoutePlanStop } from '../sales-routes/entities/route-plan-stop.entity';
 import { RouteSession } from '../sales-routes/entities/route-session.entity';
@@ -31,6 +32,9 @@ export class FieldMonitoringService {
 
     @InjectRepository(DailyReport)
     private readonly reportRepo: Repository<DailyReport>,
+
+    @InjectRepository(Outlet)
+    private readonly outletRepo: Repository<Outlet>,
 
     @InjectRepository(SalesIncident)
     private readonly incidentRepo: Repository<SalesIncident>,
@@ -215,6 +219,16 @@ export class FieldMonitoringService {
         .orderBy('COALESCE(ps.actualSeq, ps.suggestedSeq)', 'ASC')
         .getMany();
 
+      const outletIds = Array.from(
+        new Set(stops.map((stop) => stop.outletId).filter(Boolean)),
+      );
+      const outlets = outletIds.length
+        ? await this.outletRepo.find({
+            where: outletIds.map((id) => ({ id })),
+          })
+        : [];
+      const outletById = new Map(outlets.map((outlet) => [outlet.id, outlet]));
+
       const stopIds = stops.map((s) => s.id);
       const events = stopIds.length
         ? await this.stopEventRepo
@@ -226,6 +240,7 @@ export class FieldMonitoringService {
 
       routeTimeline = await Promise.all(stops.map(async (stop) => {
         const stopEvts = events.filter((e) => e.stopId === stop.id);
+        const outlet = outletById.get(stop.outletId);
         const arrivedAt = stopEvts.find((e) => e.eventType === 'ARRIVED')?.eventTime ?? null;
         const completedAt =
           stopEvts.find((e) => e.eventType === 'COMPLETED' || e.eventType === 'COMPLETE')
@@ -244,16 +259,24 @@ export class FieldMonitoringService {
         // Fetch visit data for photos
         const visit = await this.visitRepo.findOne({
           where: { stopId: stop.id },
-          select: ['photoUrls'],
+          select: ['photoUrls', 'shopNameSnapshot'],
         });
 
         return {
           stopId: stop.id,
           sequence: stop.actualSeq ?? stop.suggestedSeq,
           outletId: stop.outletId,
-          outletName: `Outlet #${stop.outletId.slice(0, 6)}`,
+          outletName:
+            outlet?.outletName ??
+            visit?.shopNameSnapshot ??
+            `Outlet #${stop.outletId.slice(0, 6)}`,
+          outletAddress: outlet?.address ?? null,
+          latitude: outlet?.latitude ?? null,
+          longitude: outlet?.longitude ?? null,
           purpose: stop.purpose,
           status: stop.status,
+          etaMinutes: stop.etaMinutes,
+          distanceKm: stop.distanceKm,
           durationMinutes,
           arrivedAt,
           completedAt,
@@ -326,7 +349,9 @@ export class FieldMonitoringService {
             repComments: report.repComments,
             routeSummary: report.routeSummaryJson,
             visitSummary: report.visitSummaryJson,
+            osaSummary: report.osaSummaryJson,
             deliverySummary: report.deliverySummaryJson,
+            returnSummary: report.returnSummaryJson,
             incidentSummary: report.incidentSummaryJson,
           }
         : null,

@@ -5,10 +5,13 @@ import { ActivityModule } from '../activity/activity.module';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PortalApprovalGuard } from '../auth/guards/portal-approval.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { ActivityLog } from '../activity/entities/activity.entity';
 import { Outlet } from '../outlets/entities/outlet.entity';
 import { Product } from '../products/entities/product.entity';
+import { SalesRoute } from '../sales-routes/entities/sales-route.entity';
 import { User } from '../users/entities/user.entity';
 import { UsersModule } from '../users/users.module';
+import { SalesRoutesModule } from '../sales-routes/sales-routes.module';
 import { WarehouseInventoryItem } from '../warehouses/entities/warehouse-inventory-item.entity';
 import { OrderItem } from './entities/order-item.entity';
 import { Order } from './entities/order.entity';
@@ -26,6 +29,8 @@ import { TmOrdersService } from './tm-orders.service';
       Product,
       User,
       WarehouseInventoryItem,
+      SalesRoute,
+      ActivityLog,
     ]),
     UsersModule,
     ActivityModule,

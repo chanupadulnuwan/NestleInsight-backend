@@ -57,7 +57,6 @@ import { FieldMonitoringModule } from './field-monitoring/field-monitoring.modul
     TerritoriesModule,
     UsersModule,
     WarehousesModule,
-    WarehousesModule,
     SmartRouteModule,
     FieldMonitoringModule,
   ],

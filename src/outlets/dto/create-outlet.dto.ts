@@ -1,18 +1,14 @@
 import {
-  IsString,
   IsEmail,
-  IsNotEmpty,
-  IsUUID,
-  IsNumber,
-  Matches,
-  MinLength,
-  MaxLength,
   IsLatitude,
   IsLongitude,
-  IsOptional, // 👈 ADDED THIS RIGHT HERE
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+  MinLength,
 } from 'class-validator';
-
-
 
 export class CreateOutletDto {
   @IsString()
@@ -43,9 +39,11 @@ export class CreateOutletDto {
   @MaxLength(255)
   address?: string;
 
-  @IsUUID()
-  @IsNotEmpty()
-  territoryId: string;
+  // Territory is derived from the authenticated sales rep on the backend.
+  // Keep this as a soft fallback for older clients.
+  @IsString()
+  @IsOptional()
+  territoryId?: string;
 
   @IsLatitude()
   @IsNotEmpty()
@@ -55,4 +53,3 @@ export class CreateOutletDto {
   @IsNotEmpty()
   longitude: number;
 }
-

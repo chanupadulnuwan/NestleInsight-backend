@@ -31,6 +31,7 @@ type ProcessingPreview = {
   unavailableItems: ProcessingPreviewItem[];
   availableTotal: number;
   currentTotal: number;
+  discountedTotal: number;
 };
 
 @Injectable()
@@ -386,7 +387,12 @@ export class TmOrdersService {
       allItemsAvailable: unavailableItems.length === 0,
       availableItems,
       unavailableItems,
-      currentTotal: order.totalAmount,
+      currentTotal: Number(
+        (order.subtotalBeforeDiscount ?? order.totalAmount).toFixed(2),
+      ),
+      discountedTotal: Number(
+        (order.totalAfterDiscount ?? order.totalAmount).toFixed(2),
+      ),
       availableTotal: Number(
         availableItems.reduce((sum, item) => sum + item.lineTotal, 0).toFixed(2),
       ),
@@ -399,6 +405,7 @@ export class TmOrdersService {
       orderCode: order.orderCode,
       shopName: order.shopNameSnapshot,
       currentTotal: preview.currentTotal,
+      discountedTotal: preview.discountedTotal,
       availableTotal: preview.availableTotal,
       allItemsAvailable: preview.allItemsAvailable,
       availableItems: preview.availableItems,

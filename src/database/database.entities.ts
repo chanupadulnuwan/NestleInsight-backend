@@ -8,6 +8,9 @@ import { OrderItem } from '../orders/entities/order-item.entity';
 import { Order } from '../orders/entities/order.entity';
 import { Product } from '../products/entities/product.entity';
 import { SalesIncident } from '../sales-incidents/entities/sales-incident.entity';
+import { RouteApprovalRequest } from '../sales-routes/entities/route-approval-request.entity';
+import { RouteBeatPlanItem } from '../sales-routes/entities/route-beat-plan-item.entity';
+import { RouteBeatPlanTemplate } from '../sales-routes/entities/route-beat-plan-template.entity';
 import { SalesRoute } from '../sales-routes/entities/sales-route.entity';
 import { VanLoadRequest } from '../sales-routes/entities/van-load-request.entity';
 import { StoreVisit } from '../store-visits/entities/store-visit.entity';
@@ -28,6 +31,9 @@ export const databaseEntities = [
   Order,
   OrderItem,
   Product,
+  RouteApprovalRequest,
+  RouteBeatPlanItem,
+  RouteBeatPlanTemplate,
   SalesIncident,
   SalesRoute,
   StoreVisit,

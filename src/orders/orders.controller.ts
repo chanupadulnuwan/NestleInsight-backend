@@ -36,6 +36,31 @@ export class OrdersController {
     );
   }
 
+  @Post('sales-rep/request-pin')
+  @Roles(Role.SALES_REP)
+  requestSalesRepOrderPin(
+    @Req() req: any,
+    @Body() requestAssistedOrderPinDto: RequestAssistedOrderPinDto,
+  ) {
+    return this.ordersService.requestSalesRepOrderPin(
+      req.user?.userId,
+      requestAssistedOrderPinDto,
+    );
+  }
+
+  @Post('sales-rep/:assistedOrderRequestId/confirm-pin')
+  @Roles(Role.SALES_REP)
+  confirmSalesRepOrderPin(
+    @Req() req: any,
+    @Body() confirmAssistedOrderPinDto: ConfirmAssistedOrderPinDto,
+  ) {
+    return this.ordersService.confirmSalesRepOrderPin(
+      req.user?.userId,
+      req.params.assistedOrderRequestId,
+      confirmAssistedOrderPinDto,
+    );
+  }
+
   @Post('sales-rep')
   @Roles(Role.SALES_REP)
   createSalesRepOrder(
@@ -46,23 +71,5 @@ export class OrdersController {
       req.user?.userId,
       createSalesOrderDto,
     );
-  }
-
-  @Post('rep-request')
-  @Roles(Role.SALES_REP)
-  requestSalesRepOrder(
-    @Req() req: any,
-    @Body() dto: RequestAssistedOrderPinDto,
-  ) {
-    return this.ordersService.requestSalesRepOrder(req.user?.userId, dto);
-  }
-
-  @Post('rep-confirm')
-  @Roles(Role.SALES_REP)
-  confirmSalesRepOrder(
-    @Req() req: any,
-    @Body() dto: ConfirmAssistedOrderPinDto,
-  ) {
-    return this.ordersService.confirmSalesRepOrder(req.user?.userId, dto);
   }
 }

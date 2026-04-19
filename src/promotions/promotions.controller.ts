@@ -1,11 +1,23 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, UseGuards, Request } from '@nestjs/common';
-import { PromotionsService } from './promotions.service';
-import { CreatePromotionDto, UpdatePromotionDto } from './dto/promotions.dto';
-import { ValidatePromotionDto } from './dto/validate-promotion.dto';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Request,
+  UseGuards,
+} from '@nestjs/common';
+
+import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
-import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../common/enums/role.enum';
+import { CreatePromotionDto, UpdatePromotionDto } from './dto/promotions.dto';
+import { ValidatePromotionDto } from './dto/validate-promotion.dto';
+import { PromotionsService } from './promotions.service';
 
 @Controller('promotions')
 @UseGuards(JwtAuthGuard, RolesGuard)
@@ -13,15 +25,20 @@ export class PromotionsController {
   constructor(private readonly promotionsService: PromotionsService) {}
 
   @Post('validate')
-  @Roles(Role.ADMIN, Role.REGIONAL_MANAGER, Role.TERRITORY_DISTRIBUTOR, Role.SALES_REP, Role.SHOP_OWNER)
+  @Roles(
+    Role.ADMIN,
+    Role.REGIONAL_MANAGER,
+    Role.TERRITORY_DISTRIBUTOR,
+    Role.SALES_REP,
+    Role.SHOP_OWNER,
+  )
   validatePromotion(@Body() dto: ValidatePromotionDto) {
     return this.promotionsService.validatePromotion(dto);
   }
 
   @Post()
-  create(@Body() createPromotionDto: CreatePromotionDto) {
-    // 🔥 Just pass the DTO. Remove the 'req.user.id'
-    return this.promotionsService.create(createPromotionDto);
+  create(@Request() req: any, @Body() createPromotionDto: CreatePromotionDto) {
+    return this.promotionsService.create(createPromotionDto, req.user?.userId);
   }
 
   @Get()
@@ -31,13 +48,36 @@ export class PromotionsController {
   }
 
   @Get('active')
-  @Roles(Role.ADMIN, Role.REGIONAL_MANAGER, Role.TERRITORY_DISTRIBUTOR, Role.SALES_REP, Role.SHOP_OWNER)
+  @Roles(
+    Role.ADMIN,
+    Role.REGIONAL_MANAGER,
+    Role.TERRITORY_DISTRIBUTOR,
+    Role.SALES_REP,
+    Role.SHOP_OWNER,
+  )
   findActive(@Query('territoryId') territoryId?: string) {
     return this.promotionsService.findActive(territoryId);
   }
 
+  @Get('territory')
+  @Roles(
+    Role.ADMIN,
+    Role.REGIONAL_MANAGER,
+    Role.TERRITORY_DISTRIBUTOR,
+    Role.SALES_REP,
+    Role.SHOP_OWNER,
+  )
+  findForTerritory(@Query('territoryId') territoryId: string) {
+    return this.promotionsService.findForTerritory(territoryId);
+  }
+
   @Get('validate')
-  @Roles(Role.ADMIN, Role.REGIONAL_MANAGER, Role.TERRITORY_DISTRIBUTOR, Role.SALES_REP)
+  @Roles(
+    Role.ADMIN,
+    Role.REGIONAL_MANAGER,
+    Role.TERRITORY_DISTRIBUTOR,
+    Role.SALES_REP,
+  )
   validateCode(
     @Query('code') code: string,
     @Query('shopId') shopId: string,
@@ -46,7 +86,13 @@ export class PromotionsController {
     @Query('productIds') productIds: string,
   ) {
     const productIdsArray = productIds ? productIds.split(',') : [];
-    return this.promotionsService.validatePromoCode(code, shopId, territoryId, Number(orderTotal) || 0, productIdsArray);
+    return this.promotionsService.validatePromoCode(
+      code,
+      shopId,
+      territoryId,
+      Number(orderTotal) || 0,
+      productIdsArray,
+    );
   }
 
   @Get(':id')

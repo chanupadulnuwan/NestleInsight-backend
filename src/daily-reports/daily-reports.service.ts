@@ -1,19 +1,16 @@
 import {
   Injectable,
-  BadRequestException,
   NotFoundException,
+  BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
 import { ActivityService } from '../activity/activity.service';
-import {
-  AssistedOrderRequest,
-  AssistedOrderRequestStatus,
-} from '../orders/entities/assisted-order-request.entity';
+import { Order } from '../orders/entities/order.entity';
 import { SalesIncident } from '../sales-incidents/entities/sales-incident.entity';
 import { SalesRoute, SalesRouteStatus } from '../sales-routes/entities/sales-route.entity';
-import { StoreVisit, StoreVisitStatus } from '../store-visits/entities/store-visit.entity';
+import { StoreVisit } from '../store-visits/entities/store-visit.entity';
 import { DailyReport, DailyReportStatus } from './entities/daily-report.entity';
 import { GenerateReportDto } from './dto/generate-report.dto';
 import { UpdateReportDraftDto } from './dto/update-report-draft.dto';
@@ -24,13 +21,13 @@ export class DailyReportsService {
     @InjectRepository(DailyReport)
     private readonly reportsRepo: Repository<DailyReport>,
     @InjectRepository(SalesRoute)
-    private readonly routesRepo: Repository<SalesRoute>,
+    private readonly salesRoutesRepo: Repository<SalesRoute>,
     @InjectRepository(StoreVisit)
-    private readonly visitsRepo: Repository<StoreVisit>,
+    private readonly storeVisitsRepo: Repository<StoreVisit>,
     @InjectRepository(SalesIncident)
-    private readonly incidentsRepo: Repository<SalesIncident>,
-    @InjectRepository(AssistedOrderRequest)
-    private readonly assistedOrdersRepo: Repository<AssistedOrderRequest>,
+    private readonly salesIncidentsRepo: Repository<SalesIncident>,
+    @InjectRepository(Order)
+    private readonly ordersRepo: Repository<Order>,
     private readonly activityService: ActivityService,
   ) {}
 
@@ -38,97 +35,67 @@ export class DailyReportsService {
     userId: string,
     dto: GenerateReportDto,
   ): Promise<DailyReport> {
-    const route = await this.routesRepo.findOne({
-      where: { id: dto.routeId, salesRepId: userId },
-    });
-
-    if (!route) {
-      throw new NotFoundException('Sales route not found.');
-    }
-
+    const route = await this.requireOwnedRoute(userId, dto.routeId);
     if (route.status !== SalesRouteStatus.CLOSED) {
       throw new BadRequestException(
-        'Daily reports can only be generated after the route is closed.',
+        'Close the route before generating the daily report.',
       );
     }
 
-    const reportDate = this.resolveReportDate(route);
-    const [visits, incidents, assistedOrders] = await Promise.all([
-      this.visitsRepo.find({
-        where: { routeId: route.id, salesRepId: userId },
-        order: { visitStartedAt: 'ASC' },
-      }),
-      this.incidentsRepo.find({
-        where: { routeId: route.id, salesRepId: userId },
-        order: { createdAt: 'ASC' },
-      }),
-      this.assistedOrdersRepo.find({
-        where: { routeId: route.id, salesRepId: userId },
-        order: { requestedAt: 'ASC' },
-      }),
-    ]);
-
     const existingReport = await this.reportsRepo.findOne({
-      where: {
-        salesRepId: userId,
-        routeId: route.id,
-        reportDate,
-      },
+      where: { salesRepId: userId, routeId: dto.routeId },
+      order: { createdAt: 'DESC' },
     });
 
     if (existingReport?.status === DailyReportStatus.SUBMITTED) {
       return existingReport;
     }
 
-    const routeSummary = this.buildRouteSummary(route);
-    const visitSummary = this.buildVisitSummary(visits);
-    const osaSummary = this.buildOsaSummary(visits);
-    const deliverySummary = this.buildDeliverySummary(assistedOrders);
-    const returnSummary = this.buildReturnSummary(route);
-    const incidentSummary = this.buildIncidentSummary(incidents);
+    const summaries = await this.buildReportSummaries(userId, route);
+    const reportDate =
+      route.closedAt?.toISOString().split('T')[0] ??
+      new Date().toISOString().split('T')[0];
 
     const report = existingReport
       ? this.reportsRepo.merge(existingReport, {
-          routeSummaryJson: routeSummary,
-          visitSummaryJson: visitSummary,
-          osaSummaryJson: osaSummary,
-          deliverySummaryJson: deliverySummary,
-          returnSummaryJson: returnSummary,
-          incidentSummaryJson: incidentSummary,
+          reportDate,
           status: DailyReportStatus.DRAFT,
           submittedAt: null,
+          ...summaries,
         })
       : this.reportsRepo.create({
-          routeId: route.id,
+          routeId: dto.routeId,
           salesRepId: userId,
           reportDate,
           status: DailyReportStatus.DRAFT,
           submittedAt: null,
-          routeSummaryJson: routeSummary,
-          visitSummaryJson: visitSummary,
-          osaSummaryJson: osaSummary,
-          deliverySummaryJson: deliverySummary,
-          returnSummaryJson: returnSummary,
-          incidentSummaryJson: incidentSummary,
           repComments: null,
-        } as any);
+          ...summaries,
+        } as Partial<DailyReport>);
 
-    const savedReport = await this.reportsRepo.save(report as any);
+    const savedReport = await this.reportsRepo.save(report);
 
     await this.activityService.logForUser({
       userId,
       type: 'DAILY_REPORT_DRAFT_GENERATED',
-      title: 'Daily report draft generated',
-      message: `Daily report draft prepared for ${reportDate}.`,
+      title: 'Daily report draft ready',
+      message: `Daily report draft prepared for ${savedReport.reportDate}.`,
       metadata: {
         reportId: savedReport.id,
         reportDate: savedReport.reportDate,
         status: savedReport.status,
-        routeId: route.id,
       },
     });
 
     return savedReport;
+  }
+
+  async getMyReports(salesRepId: string): Promise<DailyReport[]> {
+    return this.reportsRepo.find({
+      where: { salesRepId },
+      order: { createdAt: 'DESC' },
+      take: 30,
+    });
   }
 
   async getMyReport(salesRepId: string, reportId: string): Promise<DailyReport> {
@@ -143,14 +110,6 @@ export class DailyReportsService {
     return report;
   }
 
-  async getMyReports(salesRepId: string): Promise<DailyReport[]> {
-    return this.reportsRepo.find({
-      where: { salesRepId },
-      order: { reportDate: 'DESC' },
-      take: 30,
-    });
-  }
-
   async updateDraft(
     salesRepId: string,
     reportId: string,
@@ -159,11 +118,26 @@ export class DailyReportsService {
     const report = await this.getMyReport(salesRepId, reportId);
 
     if (report.status !== DailyReportStatus.DRAFT) {
-      throw new BadRequestException('Only draft reports can be edited.');
+      throw new BadRequestException(
+        'Only draft reports can be updated.',
+      );
     }
 
     report.repComments = dto.repComments?.trim() || null;
-    return this.reportsRepo.save(report);
+    const savedReport = await this.reportsRepo.save(report);
+
+    await this.activityService.logForUser({
+      userId: salesRepId,
+      type: 'DAILY_REPORT_DRAFT_UPDATED',
+      title: 'Daily report draft updated',
+      message: `Daily report draft for ${savedReport.reportDate} was updated.`,
+      metadata: {
+        reportId: savedReport.id,
+        status: savedReport.status,
+      },
+    });
+
+    return savedReport;
   }
 
   async submitReport(
@@ -176,32 +150,19 @@ export class DailyReportsService {
       return report;
     }
 
-    if (report.status !== DailyReportStatus.DRAFT) {
-      throw new BadRequestException('Only draft reports can be submitted.');
-    }
-
     report.status = DailyReportStatus.SUBMITTED;
     report.submittedAt = new Date();
-
     const savedReport = await this.reportsRepo.save(report);
-
-    if (savedReport.routeId) {
-      await this.incidentsRepo.update(
-        { routeId: savedReport.routeId, salesRepId },
-        { includedInReport: true },
-      );
-    }
 
     await this.activityService.logForUser({
       userId: salesRepId,
       type: 'DAILY_REPORT_SUBMITTED',
-      title: 'Daily report submitted',
-      message: `Daily report submitted for ${savedReport.reportDate}.`,
+      title: 'Daily Report Submitted',
+      message: `Daily report submitted for ${savedReport.reportDate}`,
       metadata: {
         reportId: savedReport.id,
         reportDate: savedReport.reportDate,
         status: savedReport.status,
-        submittedAt: savedReport.submittedAt?.toISOString() ?? null,
       },
     });
 
@@ -213,7 +174,13 @@ export class DailyReportsService {
     startDate?: string,
     endDate?: string,
   ): Promise<DailyReport[]> {
-    const query = this.reportsRepo.createQueryBuilder('report');
+    const query = this.reportsRepo
+      .createQueryBuilder('report')
+      .leftJoin('report.route', 'route');
+
+    if (territoryId) {
+      query.andWhere('route.territory_id = :territoryId', { territoryId });
+    }
 
     if (startDate) {
       query.andWhere('report.reportDate >= :startDate', { startDate });
@@ -226,228 +193,165 @@ export class DailyReportsService {
     return query.orderBy('report.reportDate', 'DESC').getMany();
   }
 
-  private resolveReportDate(route: SalesRoute) {
-    const sourceDate = route.closedAt ?? route.startedAt ?? route.createdAt;
-    return sourceDate.toISOString().split('T')[0];
-  }
+  private async requireOwnedRoute(salesRepId: string, routeId: string) {
+    const route = await this.salesRoutesRepo.findOne({
+      where: { id: routeId, salesRepId },
+    });
 
-  private buildRouteSummary(route: SalesRoute) {
-    const openingStock = route.openingStockJson ?? [];
-    const closingStock = route.closingStockJson ?? [];
-    const returns = route.returnItemsJson ?? [];
-    const variance = route.varianceJson ?? [];
-    const openingCases = openingStock.reduce(
-      (sum, item: any) => sum + Number(item?.quantityCases ?? 0),
-      0,
-    );
-    const closingCases = closingStock.reduce(
-      (sum, item: any) => sum + Number(item?.quantityCases ?? 0),
-      0,
-    );
-    const totalReturnedCases = returns.reduce(
-      (sum, item: any) => sum + Number(item?.quantityCases ?? 0),
-      0,
-    );
-
-    return {
-      routeId: route.id,
-      status: route.status,
-      startedAt: route.startedAt,
-      closedAt: route.closedAt,
-      fieldDurationMinutes:
-        route.startedAt && route.closedAt
-          ? Math.max(
-              0,
-              Math.round(
-                (route.closedAt.getTime() - route.startedAt.getTime()) / 60000,
-              ),
-            )
-          : null,
-      openingStockLines: openingStock.length,
-      closingStockLines: closingStock.length,
-      openingStockCases: openingCases,
-      closingStockCases: closingCases,
-      returnLineCount: returns.length,
-      totalReturnedCases,
-      varianceLineCount: variance.length,
-      hasVariance: variance.some(
-        (item: any) => Number(item?.varianceUnits ?? 0) !== 0,
-      ),
-    };
-  }
-
-  private buildVisitSummary(visits: StoreVisit[]) {
-    const completedVisits = visits.filter(
-      (visit) => visit.status === StoreVisitStatus.COMPLETED,
-    );
-    const totalDurationMinutes = completedVisits.reduce((sum, visit) => {
-      if (visit.durationMinutes != null) {
-        return sum + visit.durationMinutes;
-      }
-      if (visit.durationSeconds != null) {
-        return sum + Math.round(visit.durationSeconds / 60);
-      }
-      return sum;
-    }, 0);
-
-    return {
-      totalVisits: visits.length,
-      completedVisits: completedVisits.length,
-      inProgressVisits: visits.length - completedVisits.length,
-      totalDurationMinutes,
-      photoCount: visits.reduce(
-        (sum, visit) => sum + (visit.photoUrls?.length ?? 0),
-        0,
-      ),
-      feedbackCount: visits
-        .filter((visit) => this.hasText(visit.outletFeedback))
-        .length,
-      outlets: visits.map((visit) => ({
-        visitId: visit.id,
-        outletId: visit.shopId,
-        outletName: visit.shopNameSnapshot,
-        status: visit.status,
-        startedAt: visit.visitStartedAt,
-        endedAt: visit.visitEndedAt,
-        durationSeconds: visit.durationSeconds,
-      })),
-    };
-  }
-
-  private buildOsaSummary(visits: StoreVisit[]) {
-    const issues: Record<string, unknown>[] = [];
-    let planogramOkCount = 0;
-    let posmOkCount = 0;
-
-    for (const visit of visits) {
-      if (visit.planogramOk == true) {
-        planogramOkCount += 1;
-      }
-      if (visit.posmOk == true) {
-        posmOkCount += 1;
-      }
-
-      const rawIssues = visit.osaIssuesJson;
-      if (Array.isArray(rawIssues)) {
-        for (const issue of rawIssues) {
-          if (issue && typeof issue === 'object' && !Array.isArray(issue)) {
-            issues.push({
-              outletId: visit.shopId,
-              outletName: visit.shopNameSnapshot,
-              ...this.toRecord(issue),
-            });
-          }
-        }
-      } else if (this.isRecord(rawIssues)) {
-        issues.push({
-          outletId: visit.shopId,
-          outletName: visit.shopNameSnapshot,
-          ...this.toRecord(rawIssues),
-        });
-      }
+    if (!route) {
+      throw new NotFoundException('Sales route not found.');
     }
 
-    const outletIdsWithIssues = new Set(
-      issues
-        .map((item) =>
-          typeof item.outletId === 'string' ? item.outletId.trim() : null,
-        )
-        .filter((id): id is string => Boolean(id)),
-    );
-
-    return {
-      planogramOkCount,
-      posmOkCount,
-      outletCountWithIssues: outletIdsWithIssues.size,
-      issueCount: issues.length,
-      issues,
-    };
+    return route;
   }
 
-  private buildDeliverySummary(assistedOrders: AssistedOrderRequest[]) {
-    const totalOrderValue = assistedOrders.reduce<number>(
-      (sum, order) => sum + order.orderTotal,
+  private async buildReportSummaries(salesRepId: string, route: SalesRoute) {
+    const [visits, incidents, salesRepOrders] = await Promise.all([
+      this.storeVisitsRepo.find({
+        where: { salesRepId, routeId: route.id },
+        order: { createdAt: 'ASC' },
+      }),
+      this.salesIncidentsRepo.find({
+        where: { salesRepId, routeId: route.id },
+        order: { createdAt: 'ASC' },
+      }),
+      this.ordersRepo.find({
+        where: { userId: salesRepId },
+        order: { placedAt: 'ASC' },
+      }),
+    ]);
+
+    const routeOrders = salesRepOrders.filter((order) =>
+      (order.customerNote ?? '').includes(`Route: ${route.id}`),
+    );
+    const completedVisits = visits.filter((visit) => visit.status === 'COMPLETED');
+    const routeReturnItems = Array.isArray(route.returnItemsJson)
+      ? route.returnItemsJson
+      : [];
+    const totalReturnedCases = routeReturnItems.reduce<number>(
+      (sum, item) => sum + Number((item as Record<string, unknown>).quantityCases ?? 0),
       0,
     );
+    const totalVisitDurationSeconds = completedVisits.reduce<number>(
+      (sum, visit) => sum + (visit.durationSeconds ?? 0),
+      0,
+    );
+    const visitsWithOsaNotes = completedVisits.filter((visit) =>
+      this.hasVisitOsaData(visit.osaIssuesJson),
+    );
+    const osaIssueCount = completedVisits.reduce<number>(
+      (sum, visit) => sum + this.countVisitOsaEntries(visit.osaIssuesJson),
+      0,
+    );
+    const visitsWithFeedback = completedVisits.filter(
+      (visit) => !!visit.outletFeedback?.trim(),
+    );
 
     return {
-      totalRequests: assistedOrders.length,
-      confirmedOrders: assistedOrders.filter(
-        (order) => order.status === AssistedOrderRequestStatus.CONFIRMED,
-      ).length,
-      draftOrders: assistedOrders.filter(
-        (order) => order.status === AssistedOrderRequestStatus.DRAFT,
-      ).length,
-      pendingPinOrders: assistedOrders.filter(
-        (order) => order.status === AssistedOrderRequestStatus.PENDING_SHOP_PIN,
-      ).length,
-      expiredOrders: assistedOrders.filter(
-        (order) => order.status === AssistedOrderRequestStatus.EXPIRED,
-      ).length,
-      totalValue: Number(totalOrderValue.toFixed(2)),
-      orders: assistedOrders.map((order) => ({
-        requestId: order.id,
-        outletId: order.shopId,
-        outletName: order.shopNameSnapshot,
-        status: order.status,
-        totalAmount: order.orderTotal,
-        itemCount: order.itemsJson.length,
-        confirmedOrderId: order.confirmedOrderId,
-        assistedReason: order.assistedReason,
-        requestedAt: order.requestedAt,
-        confirmedAt: order.confirmedAt,
-      })),
+      routeSummaryJson: {
+        routeId: route.id,
+        status: route.status,
+        territoryId: route.territoryId,
+        warehouseId: route.warehouseId,
+        vehicleId: route.vehicleId,
+        startedAt: route.startedAt?.toISOString() ?? null,
+        closedAt: route.closedAt?.toISOString() ?? null,
+        openingStockLineCount: Array.isArray(route.openingStockJson)
+          ? route.openingStockJson.length
+          : 0,
+        closingStockLineCount: Array.isArray(route.closingStockJson)
+          ? route.closingStockJson.length
+          : 0,
+        varianceLineCount: Array.isArray(route.varianceJson)
+          ? route.varianceJson.length
+          : 0,
+        returnLineCount: routeReturnItems.length,
+      },
+      visitSummaryJson: {
+        totalVisits: visits.length,
+        completedVisits: completedVisits.length,
+        totalVisitDurationSeconds,
+        totalVisitDurationMinutes: Math.round(totalVisitDurationSeconds / 60),
+        visitedShops: visits.map((visit) => ({
+          visitId: visit.id,
+          shopId: visit.shopId,
+          shopName: visit.shopNameSnapshot,
+          status: visit.status,
+          durationSeconds: visit.durationSeconds ?? 0,
+        })),
+      },
+      osaSummaryJson: {
+        visitsWithPlanogramOk: completedVisits.filter((visit) => visit.planogramOk === true)
+          .length,
+        visitsWithPosmOk: completedVisits.filter((visit) => visit.posmOk === true)
+          .length,
+        visitsWithOsaNotes: visitsWithOsaNotes.length,
+        totalOsaIssueEntries: osaIssueCount,
+        visitsWithFeedback: visitsWithFeedback.length,
+        feedbackSamples: visitsWithFeedback.slice(0, 5).map((visit) => ({
+          shopName: visit.shopNameSnapshot,
+          feedback: visit.outletFeedback,
+        })),
+      },
+      deliverySummaryJson: {
+        assistedOrderCount: routeOrders.length,
+        totalOrderValue: Number(
+          routeOrders.reduce((sum, order) => sum + Number(order.totalAmount ?? 0), 0).toFixed(2),
+        ),
+        orderCodes: routeOrders.map((order) => order.orderCode),
+        orders: routeOrders.map((order) => ({
+          orderId: order.id,
+          orderCode: order.orderCode,
+          status: order.status,
+          totalAmount: Number(order.totalAmount ?? 0),
+          placedAt: order.placedAt?.toISOString?.() ?? order.placedAt,
+        })),
+      },
+      returnSummaryJson: {
+        returnLineCount: routeReturnItems.length,
+        totalReturnedCases,
+        items: routeReturnItems,
+      },
+      incidentSummaryJson: {
+        incidentCount: incidents.length,
+        incidentsBySeverity: {
+          LOW: incidents.filter((incident) => incident.severity === 'LOW').length,
+          MEDIUM: incidents.filter((incident) => incident.severity === 'MEDIUM').length,
+          HIGH: incidents.filter((incident) => incident.severity === 'HIGH').length,
+          CRITICAL: incidents.filter((incident) => incident.severity === 'CRITICAL').length,
+        },
+        incidents: incidents.map((incident) => ({
+          incidentId: incident.id,
+          type: incident.incidentType,
+          severity: incident.severity,
+          description: incident.description,
+          createdAt: incident.createdAt.toISOString(),
+        })),
+      },
     };
   }
 
-  private buildReturnSummary(route: SalesRoute) {
-    const returns = route.returnItemsJson ?? [];
-
-    return {
-      totalReturnLines: returns.length,
-      totalReturnedCases: returns.reduce(
-        (sum, item: any) => sum + Number(item?.quantityCases ?? 0),
-        0,
-      ),
-      items: returns,
-    };
-  }
-
-  private buildIncidentSummary(incidents: SalesIncident[]) {
-    const bySeverity: Record<string, number> = {};
-    const byType: Record<string, number> = {};
-
-    for (const incident of incidents) {
-      bySeverity[incident.severity] = (bySeverity[incident.severity] ?? 0) + 1;
-      byType[incident.incidentType] = (byType[incident.incidentType] ?? 0) + 1;
+  private hasVisitOsaData(value: unknown) {
+    if (Array.isArray(value)) {
+      return value.length > 0;
     }
 
-    return {
-      totalIncidents: incidents.length,
-      bySeverity,
-      byType,
-      incidents: incidents.map((incident) => ({
-        id: incident.id,
-        outletId: incident.shopId,
-        orderId: incident.orderId,
-        incidentType: incident.incidentType,
-        severity: incident.severity,
-        description: incident.description,
-        includedInReport: incident.includedInReport,
-        createdAt: incident.createdAt,
-      })),
-    };
+    if (value && typeof value === 'object') {
+      return Object.keys(value as Record<string, unknown>).length > 0;
+    }
+
+    return false;
   }
 
-  private hasText(value: string | null) {
-    return value != null && value.trim().length > 0;
-  }
+  private countVisitOsaEntries(value: unknown) {
+    if (Array.isArray(value)) {
+      return value.length;
+    }
 
-  private isRecord(value: unknown): value is Record<string, unknown> {
-    return value != null && typeof value === 'object' && !Array.isArray(value);
-  }
+    if (value && typeof value === 'object') {
+      return 1;
+    }
 
-  private toRecord(value: unknown): Record<string, unknown> {
-    return this.isRecord(value) ? value : {};
+    return 0;
   }
 }
