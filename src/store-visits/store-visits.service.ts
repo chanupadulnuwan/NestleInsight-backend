@@ -43,7 +43,6 @@ export class StoreVisitsService {
           };
         }
 
-        // Check for pending deliveries
         const pendingCount = await this.ordersRepo.count({
           where: {
             userId: dto.shopId,
@@ -52,7 +51,6 @@ export class StoreVisitsService {
         });
         hasPendingDelivery = pendingCount > 0;
       } catch (error) {
-        // Silently fail history lookup to allow visit to proceed
         console.error('Failed to fetch order history for store visit start:', error);
       }
     }
@@ -108,9 +106,7 @@ export class StoreVisitsService {
     }
 
     if (visit.salesRepId !== userId) {
-      throw new BadRequestException(
-        'You can only complete your own store visits',
-      );
+      throw new BadRequestException('You can only complete your own store visits');
     }
 
     const now = new Date();
@@ -121,12 +117,32 @@ export class StoreVisitsService {
     visit.status = StoreVisitStatus.COMPLETED;
     visit.visitEndedAt = now;
     visit.durationSeconds = durationSeconds;
-    visit.shelfStockJson = dto.shelfStockJson || null;
+
+    // Structured stock data (preferred) or legacy JSON
+    visit.shelfStockJson = (dto.stockItems as any) || dto.shelfStockJson || null;
     visit.backroomStockJson = dto.backroomStockJson || null;
-    visit.osaIssuesJson = dto.osaIssuesJson || null;
-    visit.promotionsJson = dto.promotionsJson || null;
+
+    // OSA issues
+    visit.osaIssuesJson = (dto.osaIssues as any) || dto.osaIssuesJson || null;
+
+    // Competitor notes
+    (visit as any).competitorNotes = dto.competitorNotes || null;
+
+    // Expiry items
+    (visit as any).expiryItemsJson = (dto.expiryItems as any) || null;
+
+    // Promotions
+    visit.promotionsJson = (dto.promotionChecks as any) || dto.promotionsJson || null;
+
+    // Planogram + POSM structured answers
+    (visit as any).planogramAnswersJson = dto.planogramAnswers
+      ? ([...(dto.planogramAnswers || []), ...(dto.posmAnswers || [])] as any)
+      : null;
     visit.planogramOk = dto.planogramOk ?? null;
     visit.posmOk = dto.posmOk ?? null;
+
+    // Outlet feedback
+    (visit as any).outletFeedbackAnswersJson = (dto.outletFeedbackAnswers as any) || null;
     visit.outletFeedback = dto.outletFeedback || null;
 
     const updatedVisit = await this.storeVisitsRepo.save(visit);
@@ -135,7 +151,7 @@ export class StoreVisitsService {
       userId,
       type: 'STORE_VISIT_COMPLETED',
       title: 'Store Visit Completed',
-      message: `Store visit at "${visit.shopNameSnapshot}" has been completed (${durationSeconds} seconds)`,
+      message: `Store visit at "${visit.shopNameSnapshot}" has been completed (${durationSeconds}s)`,
       metadata: {
         visitId: updatedVisit.id,
         shopName: updatedVisit.shopNameSnapshot,
@@ -204,12 +220,64 @@ export class StoreVisitsService {
       type: 'STORE_VISIT_PHOTO_ADDED',
       title: 'Store Visit Photo Added',
       message: `A shelving photo has been added to the visit at "${visit.shopNameSnapshot}"`,
-      metadata: {
-        visitId,
-        photoUrl,
-      },
+      metadata: { visitId, photoUrl },
     });
 
     return updatedVisit;
+  }
+
+  /**
+   * Returns order history context for a specific outlet —
+   * orders placed since the last completed visit by this rep.
+   * Used by the mobile app to calculate estimated sell-through per product.
+   */
+  async getOutletContext(outletId: string, salesRepId: string) {
+    // Last completed visit by this rep for this outlet
+    const lastVisit = await this.storeVisitsRepo.findOne({
+      where: {
+        shopId: outletId,
+        salesRepId,
+        status: StoreVisitStatus.COMPLETED,
+      },
+      order: { visitEndedAt: 'DESC' },
+    });
+
+    const since = lastVisit?.visitEndedAt
+      ?? new Date(Date.now() - 30 * 24 * 60 * 60 * 1000); // 30-day fallback
+
+    // All orders for this shop
+    const allOrders = await this.ordersRepo.find({
+      where: { userId: outletId },
+      relations: ['items'],
+      order: { placedAt: 'DESC' },
+    });
+
+    const ordersSinceLastVisit = allOrders.filter(
+      (o) => o.placedAt && new Date(o.placedAt) > since,
+    );
+
+    // Aggregate per-product quantities since last visit
+    const productQuantities: Record<string, number> = {};
+    for (const order of ordersSinceLastVisit) {
+      for (const item of order.items || []) {
+        if (!item.productId) continue;
+        const key = item.productId;
+        productQuantities[key] = (productQuantities[key] || 0) + (item.quantity || 0);
+      }
+    }
+
+    return {
+      lastVisitDate: lastVisit?.visitEndedAt ?? null,
+      orderCountSinceLastVisit: ordersSinceLastVisit.length,
+      recentOrders: allOrders.slice(0, 5).map((o) => ({
+        id: o.id,
+        placedAt: o.placedAt,
+        totalAmount: o.totalAmount,
+        currencyCode: o.currencyCode,
+        status: o.status,
+        itemCount: o.items?.length ?? 0,
+      })),
+      productQuantities,
+    };
   }
 }

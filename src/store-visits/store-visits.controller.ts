@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Get,
   Param,
   Patch,
   Post,
@@ -49,6 +50,13 @@ export class StoreVisitsController {
     @Body() dto: CompleteVisitDto,
   ) {
     return this.storeVisitsService.completeVisit(visitId, req.user?.userId, dto);
+  }
+
+  @Get('outlet-context/:outletId')
+  @UseGuards(RolesGuard)
+  @Roles(Role.SALES_REP)
+  getOutletContext(@Param('outletId') outletId: string, @Req() req: any) {
+    return this.storeVisitsService.getOutletContext(outletId, req.user?.userId);
   }
 
   @Post(':id/photos')

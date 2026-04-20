@@ -103,6 +103,18 @@ export class StoreVisit {
   @Column({ name: 'outlet_feedback', type: 'text', nullable: true })
   outletFeedback: string | null;
 
+  @Column({ name: 'expiry_items_json', type: 'jsonb', nullable: true })
+  expiryItemsJson: Record<string, unknown>[] | null;
+
+  @Column({ name: 'competitor_notes', type: 'text', nullable: true })
+  competitorNotes: string | null;
+
+  @Column({ name: 'planogram_answers_json', type: 'jsonb', nullable: true })
+  planogramAnswersJson: Record<string, unknown>[] | null;
+
+  @Column({ name: 'outlet_feedback_answers_json', type: 'jsonb', nullable: true })
+  outletFeedbackAnswersJson: Record<string, unknown>[] | null;
+
   @Column({
     name: 'estimated_sell_through_json',
     type: 'jsonb',
