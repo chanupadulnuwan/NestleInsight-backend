@@ -1470,10 +1470,14 @@ export class SalesRoutesService {
         }),
       ]);
 
-    const availableOutlets = await this.getEligibleOutlets(
-      route.territoryId,
-      route.warehouseId,
-    );
+    const [availableOutlets, allWarehouseOutlets] = await Promise.all([
+      this.getEligibleOutlets(route.territoryId, route.warehouseId),
+      this.outletsRepo.find({
+        where: { warehouseId: route.warehouseId },
+        order: { outletName: 'ASC' },
+        select: ['id', 'outletName', 'ownerName', 'status'],
+      }),
+    ]);
 
     return {
       id: route.id,
@@ -1502,6 +1506,12 @@ export class SalesRoutesService {
         id: outlet.id,
         outletName: outlet.outletName,
         ownerName: outlet.ownerName,
+      })),
+      allWarehouseOutlets: allWarehouseOutlets.map((outlet) => ({
+        id: outlet.id,
+        outletName: outlet.outletName,
+        ownerName: outlet.ownerName,
+        status: outlet.status,
       })),
       deliveryAlerts: deliveryAlerts.map((alert) => ({
         outletId: alert.outletId,
