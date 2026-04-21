@@ -1772,7 +1772,6 @@ export class SalesRoutesService {
   }
 
   async cancelRoute(routeId: string, salesRepId: string) {
-    const routeRepo = this.salesRouteRepo;
     const route = await this.requireOwnedRoute(routeId, salesRepId);
 
     const cancellableStatuses = [
@@ -1787,10 +1786,10 @@ export class SalesRoutesService {
       );
     }
 
-    route.status = SalesRouteStatus.CANCELLED as any;
+    route.status = SalesRouteStatus.CLOSED;
     route.warehouseManagerPinHash = null;
     route.pinExpiresAt = null;
-    await routeRepo.save(route);
+    await this.salesRoutesRepo.save(route);
 
     await this.activityService.logForUser({
       userId: salesRepId,
@@ -1816,7 +1815,7 @@ export class SalesRoutesService {
     route.status = SalesRouteStatus.AWAITING_LOAD_APPROVAL;
     route.warehouseManagerPinHash = null;
     route.pinExpiresAt = null;
-    await this.salesRouteRepo.save(route);
+    await this.salesRoutesRepo.save(route);
 
     const managers = await this.findRelevantManagers(route);
     await Promise.all(
