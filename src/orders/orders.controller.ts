@@ -1,10 +1,19 @@
-import { Body, Controller, Get, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Roles } from '../auth/decorators/roles.decorator';
 import { Role } from '../common/enums/role.enum';
 import { ConfirmAssistedOrderPinDto } from './dto/confirm-assisted-order-pin.dto';
+import { CompleteSalesRepDeliveryDto } from './dto/complete-sales-rep-delivery.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { CreateSalesOrderDto } from './dto/create-sales-order.dto';
 import { RequestAssistedOrderPinDto } from './dto/request-assisted-order-pin.dto';
@@ -58,6 +67,33 @@ export class OrdersController {
       req.user?.userId,
       req.params.assistedOrderRequestId,
       confirmAssistedOrderPinDto,
+    );
+  }
+
+  @Post('sales-rep/:orderId/deliver-now')
+  @Roles(Role.SALES_REP)
+  completeSalesRepImmediateDelivery(
+    @Req() req: any,
+    @Param('orderId') orderId: string,
+    @Body() completeSalesRepDeliveryDto: CompleteSalesRepDeliveryDto,
+  ) {
+    return this.ordersService.completeSalesRepImmediateDelivery(
+      req.user?.userId,
+      orderId,
+      completeSalesRepDeliveryDto,
+    );
+  }
+
+  @Post('sales-rep/deliver-now')
+  @Roles(Role.SALES_REP)
+  completeSalesRepImmediateDeliveryFromBody(
+    @Req() req: any,
+    @Body() completeSalesRepDeliveryDto: CompleteSalesRepDeliveryDto,
+  ) {
+    return this.ordersService.completeSalesRepImmediateDelivery(
+      req.user?.userId,
+      completeSalesRepDeliveryDto.orderId ?? '',
+      completeSalesRepDeliveryDto,
     );
   }
 

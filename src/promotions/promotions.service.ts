@@ -365,12 +365,12 @@ export class PromotionsService {
     }
 
     let discount = 0;
-    if (promotion.discountType === 'PERCENTAGE') {
+    if (promotion.discountType === 'percentage') {
       discount = (orderTotal * promotion.discountValue) / 100;
       if (discount > orderTotal) {
         discount = orderTotal;
       }
-    } else if (promotion.discountType === 'FIXED') {
+    } else if (promotion.discountType === 'fixed') {
       discount = Number(promotion.discountValue);
       if (discount > orderTotal) {
         discount = orderTotal;

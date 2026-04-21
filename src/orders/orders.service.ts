@@ -22,10 +22,15 @@ import {
 import { User } from '../users/entities/user.entity';
 import { UsersService } from '../users/users.service';
 import { ConfirmAssistedOrderPinDto } from './dto/confirm-assisted-order-pin.dto';
+import { CompleteSalesRepDeliveryDto } from './dto/complete-sales-rep-delivery.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
 import { CreateSalesOrderDto } from './dto/create-sales-order.dto';
 import { RequestAssistedOrderPinDto } from './dto/request-assisted-order-pin.dto';
 import { Order } from './entities/order.entity';
+import {
+  VanLoadRequest,
+  VanLoadRequestStockLine,
+} from '../sales-routes/entities/van-load-request.entity';
 import {
   createAutomaticDelayPatch,
   getOrderDueAt,
@@ -81,6 +86,8 @@ export class OrdersService {
     private readonly outletsRepository: Repository<Outlet>,
     @InjectRepository(SalesRoute)
     private readonly salesRoutesRepository: Repository<SalesRoute>,
+    @InjectRepository(VanLoadRequest)
+    private readonly vanLoadRequestsRepository: Repository<VanLoadRequest>,
     private readonly usersService: UsersService,
     private readonly activityService: ActivityService,
   ) {}
@@ -353,7 +360,8 @@ export class OrdersService {
     const normalizedItems = await this.buildNormalizedSalesRepOrderItems(
       dto.items,
     );
-    const wasCreatedByThisSalesRep = outlet.registeredBySalesRepId === salesRepId;
+    const wasCreatedByThisSalesRep =
+      outlet.registeredBySalesRepId === salesRepId;
     const shopOwnerMatch = wasCreatedByThisSalesRep
       ? null
       : await this.resolveActiveShopOwnerForOutlet(outlet);
@@ -369,10 +377,9 @@ export class OrdersService {
         ? 'SALES_REP_CREATED_OUTLET'
         : 'ACTIVE_SHOP_OWNER_NOT_FOUND';
       const result = await this.createSalesRepOrder(salesRepId, dto, {
-        assistedReason:
-          wasCreatedByThisSalesRep
-            ? 'Captured during store visit for a sales-rep-created outlet.'
-            : 'Captured during store visit; no active shop owner app account is linked to this outlet.',
+        assistedReason: wasCreatedByThisSalesRep
+          ? 'Captured during store visit for a sales-rep-created outlet.'
+          : 'Captured during store visit; no active shop owner app account is linked to this outlet.',
         shopNameSnapshot: outlet.outletName,
       });
 
@@ -557,6 +564,206 @@ export class OrdersService {
     return {
       message: 'Assisted order placed successfully.',
       order: result.order,
+    };
+  }
+
+  async completeSalesRepImmediateDelivery(
+    salesRepId: string,
+    orderId: string,
+    dto: CompleteSalesRepDeliveryDto,
+  ) {
+    if (!orderId?.trim()) {
+      throw new BadRequestException('Missing order reference for delivery.');
+    }
+
+    const salesRep = await this.requireSalesRep(salesRepId);
+    const route = await this.requireOwnedInProgressRoute(
+      dto.routeId,
+      salesRepId,
+    );
+    const order = await this.ordersRepository.findOne({
+      where: { id: orderId },
+      relations: {
+        territory: true,
+        warehouse: true,
+      },
+    });
+
+    if (!order) {
+      throw new NotFoundException('Order not found.');
+    }
+    if (order.source !== 'SALES_REP') {
+      throw new BadRequestException(
+        'Only sales-rep-assisted orders can be delivered from lorry stock.',
+      );
+    }
+    if (!order.customerNote?.includes(`Route: ${route.id}`)) {
+      throw new BadRequestException(
+        'This order is not linked to the active sales route.',
+      );
+    }
+    if (['COMPLETED', 'CANCELLED'].includes(order.status?.toUpperCase())) {
+      throw new BadRequestException('This order is already closed.');
+    }
+
+    const loadRequest = await this.vanLoadRequestsRepository.findOne({
+      where: { routeId: route.id },
+      order: { createdAt: 'DESC' },
+    });
+    if (!loadRequest) {
+      throw new BadRequestException(
+        'No approved lorry load is available for this route.',
+      );
+    }
+
+    const plan = this.buildImmediateDeliveryPlan(order, loadRequest);
+    const deliveredItemCount = plan.reduce(
+      (sum, item) => sum + item.deliveredCases,
+      0,
+    );
+    if (deliveredItemCount <= 0) {
+      throw new BadRequestException(
+        'The current lorry load does not contain stock for this order.',
+      );
+    }
+
+    const pendingItems = plan.filter((item) => item.pendingCases > 0);
+    const isPartial = pendingItems.length > 0;
+    if (isPartial && !dto.nextDeliveryDate) {
+      throw new BadRequestException(
+        'Select the next delivery date for a partial delivery.',
+      );
+    }
+
+    this.applyImmediateDeliveryDeduction(loadRequest, plan);
+    await this.vanLoadRequestsRepository.save(loadRequest);
+
+    const confirmationNote = dto.confirmationNote.trim();
+    const deliveryNoteSegments = [
+      order.customerNote,
+      `Immediate sales-rep delivery by ${salesRep.username}`,
+      `Confirmation: ${confirmationNote}`,
+      isPartial
+        ? `Partial balance backordered for ${dto.nextDeliveryDate}`
+        : null,
+    ].filter((value): value is string => !!value);
+
+    order.status = isPartial ? 'PARTIAL' : 'COMPLETED';
+    order.customerNote = deliveryNoteSegments.join(' | ');
+    await this.ordersRepository.save(order);
+
+    let backorder: Order | null = null;
+    if (isPartial) {
+      backorder = await this.createImmediateDeliveryBackorder(
+        order,
+        route,
+        pendingItems,
+        dto.nextDeliveryDate,
+      );
+    }
+
+    const managers = await this.findRelevantManagersForRoute(route);
+    const salesRepDisplayName =
+      `${salesRep.firstName ?? ''} ${salesRep.lastName ?? ''}`.trim() ||
+      salesRep.username;
+
+    await Promise.all([
+      this.activityService.logForUser({
+        userId: salesRepId,
+        type: isPartial
+          ? 'SALES_REP_ORDER_PARTIAL_DELIVERY'
+          : 'SALES_REP_ORDER_DELIVERED',
+        title: isPartial ? 'Partial delivery completed' : 'Order delivered',
+        message: isPartial
+          ? `${order.orderCode} was partially delivered. ${backorder?.orderCode ?? 'A backorder'} was created for the balance.`
+          : `${order.orderCode} was delivered from your lorry stock.`,
+        metadata: {
+          orderId: order.id,
+          orderCode: order.orderCode,
+          routeId: route.id,
+          backorderId: backorder?.id ?? null,
+          backorderCode: backorder?.orderCode ?? null,
+          deliveredItems: plan.map((item) => ({
+            productId: item.productId,
+            productName: item.productName,
+            quantityCases: item.deliveredCases,
+          })),
+          pendingItems: pendingItems.map((item) => ({
+            productId: item.productId,
+            productName: item.productName,
+            quantityCases: item.pendingCases,
+          })),
+        },
+      }),
+      ...managers.map((manager) =>
+        this.activityService.logForUser({
+          userId: manager.id,
+          type: isPartial
+            ? 'SALES_REP_ORDER_PARTIAL_DELIVERY'
+            : 'SALES_REP_ORDER_DELIVERED',
+          title: isPartial
+            ? 'Sales rep partial delivery'
+            : 'Sales rep completed delivery',
+          message: isPartial
+            ? `${salesRepDisplayName} partially delivered ${order.orderCode} for ${order.shopNameSnapshot}. ${backorder?.orderCode ?? 'A backorder'} is waiting for approval.`
+            : `${salesRepDisplayName} placed and delivered ${order.orderCode} for ${order.shopNameSnapshot}.`,
+          metadata: {
+            orderId: order.id,
+            orderCode: order.orderCode,
+            routeId: route.id,
+            salesRepId,
+            salesRepName: salesRepDisplayName,
+            backorderId: backorder?.id ?? null,
+            backorderCode: backorder?.orderCode ?? null,
+          },
+        }),
+      ),
+    ]);
+
+    if (order.userId !== salesRepId) {
+      await this.activityService.logForUser({
+        userId: order.userId,
+        type: isPartial ? 'ORDER_PARTIAL_DELIVERY' : 'ORDER_COMPLETED',
+        title: isPartial ? 'Order partially delivered' : 'Order completed',
+        message: isPartial
+          ? `${order.orderCode} was partially delivered. The remaining items are pending follow-up delivery.`
+          : `${order.orderCode} was delivered successfully.`,
+        metadata: {
+          orderId: order.id,
+          orderCode: order.orderCode,
+          routeId: route.id,
+          backorderId: backorder?.id ?? null,
+          backorderCode: backorder?.orderCode ?? null,
+        },
+      });
+    }
+
+    return {
+      message: isPartial
+        ? 'Partial delivery completed and a backorder was sent for approval.'
+        : 'Order delivered successfully.',
+      status: order.status,
+      order: this.serializeOrder(order),
+      delivery: {
+        outcome: isPartial ? 'PARTIAL' : 'COMPLETED',
+        deliveredItems: plan
+          .filter((item) => item.deliveredCases > 0)
+          .map((item) => ({
+            productId: item.productId,
+            productName: item.productName,
+            requestedCases: item.requestedCases,
+            deliveredCases: item.deliveredCases,
+            pendingCases: item.pendingCases,
+          })),
+        pendingItems: pendingItems.map((item) => ({
+          productId: item.productId,
+          productName: item.productName,
+          requestedCases: item.requestedCases,
+          deliveredCases: item.deliveredCases,
+          pendingCases: item.pendingCases,
+        })),
+        backorder: backorder ? this.serializeOrder(backorder) : null,
+      },
     };
   }
 
@@ -770,6 +977,156 @@ export class OrdersService {
       confirmedOrderId: metadata.confirmedOrderId?.toString(),
       assistedReason: metadata.assistedReason?.toString(),
     } satisfies AssistedOrderRequestMetadata;
+  }
+
+  private buildImmediateDeliveryPlan(
+    order: Order,
+    loadRequest: VanLoadRequest,
+  ) {
+    const availableByProduct = new Map<string, number>();
+    for (const line of [
+      ...(loadRequest.freeSaleStockJson ?? []),
+      ...(loadRequest.deliveryStockJson ?? []),
+    ]) {
+      const productId = line.productId?.toString() ?? '';
+      if (!productId) {
+        continue;
+      }
+      availableByProduct.set(
+        productId,
+        (availableByProduct.get(productId) ?? 0) +
+          Math.max(0, Number(line.quantityCases) || 0),
+      );
+    }
+
+    return order.items
+      .filter((item) => !!item.productId && item.quantity > 0)
+      .map((item) => {
+        const productId = item.productId!;
+        const requestedCases = Number(item.quantity) || 0;
+        const availableCases = availableByProduct.get(productId) ?? 0;
+        const deliveredCases = Math.min(requestedCases, availableCases);
+        availableByProduct.set(productId, availableCases - deliveredCases);
+
+        return {
+          productId,
+          productName: item.productNameSnapshot,
+          requestedCases,
+          deliveredCases,
+          pendingCases: Math.max(0, requestedCases - deliveredCases),
+          casePrice: Number(item.casePriceSnapshot) || 0,
+          orderItem: item,
+        };
+      });
+  }
+
+  private applyImmediateDeliveryDeduction(
+    loadRequest: VanLoadRequest,
+    plan: ReturnType<OrdersService['buildImmediateDeliveryPlan']>,
+  ) {
+    for (const item of plan) {
+      let remaining = item.deliveredCases;
+      if (remaining <= 0) {
+        continue;
+      }
+
+      remaining = this.deductFromLoadLines(
+        loadRequest.freeSaleStockJson,
+        item.productId,
+        remaining,
+      );
+      remaining = this.deductFromLoadLines(
+        loadRequest.deliveryStockJson,
+        item.productId,
+        remaining,
+      );
+    }
+
+    loadRequest.freeSaleStockJson = (
+      loadRequest.freeSaleStockJson ?? []
+    ).filter((line) => Number(line.quantityCases) > 0);
+    loadRequest.deliveryStockJson = (
+      loadRequest.deliveryStockJson ?? []
+    ).filter((line) => Number(line.quantityCases) > 0);
+  }
+
+  private deductFromLoadLines(
+    lines: VanLoadRequestStockLine[],
+    productId: string,
+    quantityCases: number,
+  ) {
+    let remaining = quantityCases;
+    for (const line of lines ?? []) {
+      if (remaining <= 0 || line.productId !== productId) {
+        continue;
+      }
+      const lineCases = Math.max(0, Number(line.quantityCases) || 0);
+      const deducted = Math.min(lineCases, remaining);
+      line.quantityCases = lineCases - deducted;
+      remaining -= deducted;
+    }
+
+    return remaining;
+  }
+
+  private async createImmediateDeliveryBackorder(
+    sourceOrder: Order,
+    route: SalesRoute,
+    pendingItems: ReturnType<OrdersService['buildImmediateDeliveryPlan']>,
+    nextDeliveryDate?: string,
+  ) {
+    const items = pendingItems
+      .filter((item) => item.pendingCases > 0)
+      .map((item) => ({
+        productId: item.productId,
+        skuSnapshot: item.orderItem.skuSnapshot,
+        productNameSnapshot: item.orderItem.productNameSnapshot,
+        packSizeSnapshot: item.orderItem.packSizeSnapshot,
+        imageUrlSnapshot: item.orderItem.imageUrlSnapshot,
+        casePriceSnapshot: item.casePrice,
+        quantity: item.pendingCases,
+        lineTotal: Number((item.casePrice * item.pendingCases).toFixed(2)),
+        product: item.orderItem.product,
+      }));
+    const totalAmount = Number(
+      items.reduce((sum, item) => sum + item.lineTotal, 0).toFixed(2),
+    );
+    const backorder = this.ordersRepository.create({
+      orderCode: `SR-BO-${Date.now()}`,
+      userId: sourceOrder.userId,
+      shopNameSnapshot: sourceOrder.shopNameSnapshot,
+      territoryId: sourceOrder.territoryId ?? route.territoryId ?? null,
+      warehouseId: sourceOrder.warehouseId ?? route.warehouseId ?? null,
+      status: 'PLACED',
+      source: 'SALES_REP',
+      currencyCode: sourceOrder.currencyCode,
+      totalAmount,
+      placedAt: new Date(),
+      customerNote: [
+        `Backorder from partial sales-rep delivery - Route: ${route.id}`,
+        `Original order: ${sourceOrder.orderCode}`,
+        nextDeliveryDate ? `Next delivery date: ${nextDeliveryDate}` : null,
+      ]
+        .filter((value): value is string => !!value)
+        .join(' | '),
+      items,
+    });
+
+    return this.ordersRepository.save(backorder);
+  }
+
+  private async findRelevantManagersForRoute(route: SalesRoute) {
+    const managers = [
+      ...(await this.usersService.findByRole(Role.REGIONAL_MANAGER)),
+      ...(await this.usersService.findByRole(Role.TERRITORY_DISTRIBUTOR)),
+    ];
+    const matchedManagers = managers.filter(
+      (manager) =>
+        manager.warehouseId === route.warehouseId ||
+        (!!route.territoryId && manager.territoryId === route.territoryId),
+    );
+
+    return matchedManagers.length > 0 ? matchedManagers : managers;
   }
 
   private async resolveActiveShopOwnerForOutlet(

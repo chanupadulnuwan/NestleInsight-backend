@@ -11,7 +11,7 @@ import { Product } from '../products/entities/product.entity';
 import { SalesRoute } from '../sales-routes/entities/sales-route.entity';
 import { User } from '../users/entities/user.entity';
 import { UsersModule } from '../users/users.module';
-import { SalesRoutesModule } from '../sales-routes/sales-routes.module';
+import { VanLoadRequest } from '../sales-routes/entities/van-load-request.entity';
 import { WarehouseInventoryItem } from '../warehouses/entities/warehouse-inventory-item.entity';
 import { OrderItem } from './entities/order-item.entity';
 import { Order } from './entities/order.entity';
@@ -28,6 +28,7 @@ import { TmOrdersService } from './tm-orders.service';
       Outlet,
       Product,
       User,
+      VanLoadRequest,
       WarehouseInventoryItem,
       SalesRoute,
       ActivityLog,
@@ -36,7 +37,13 @@ import { TmOrdersService } from './tm-orders.service';
     ActivityModule,
   ],
   controllers: [OrdersController, TmOrdersController],
-  providers: [OrdersService, TmOrdersService, JwtAuthGuard, RolesGuard, PortalApprovalGuard],
+  providers: [
+    OrdersService,
+    TmOrdersService,
+    JwtAuthGuard,
+    RolesGuard,
+    PortalApprovalGuard,
+  ],
   exports: [OrdersService, TypeOrmModule],
 })
 export class OrdersModule {}
