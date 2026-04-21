@@ -188,4 +188,18 @@ export class SalesRoutesController {
   ) {
     return this.salesRoutesService.closeRoute(routeId, req.user?.userId, dto);
   }
+
+  @Post(':id/cancel')
+  @UseGuards(RolesGuard)
+  @Roles(Role.SALES_REP)
+  cancelRoute(@Param('id') routeId: string, @Req() req: any) {
+    return this.salesRoutesService.cancelRoute(routeId, req.user?.userId);
+  }
+
+  @Post(':id/request-pin-refresh')
+  @UseGuards(RolesGuard)
+  @Roles(Role.SALES_REP)
+  requestPinRefresh(@Param('id') routeId: string, @Req() req: any) {
+    return this.salesRoutesService.requestPinRefresh(routeId, req.user?.userId);
+  }
 }

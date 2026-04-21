@@ -936,7 +936,7 @@ export class SalesRoutesService {
         decision: dto.decision,
         ...(generatedPin
           ? {
-              routeStartPin: generatedPin,
+              pin: generatedPin,
               pinExpiresAt: routeStartPinExpiresAtIso,
             }
           : {}),
@@ -947,10 +947,20 @@ export class SalesRoutesService {
       userId: managerId,
       type: 'ROUTE_LOAD_REQUEST_REVIEWED',
       title: 'Van load request reviewed',
-      message: `You ${dto.decision.toLowerCase()} a sales route van load request.`,
+      message:
+        dto.decision === LoadRequestDecision.REJECTED
+          ? 'You rejected a sales route van load request.'
+          : 'You approved a sales route van load request. Share the PIN below with the sales rep to start the route.',
       metadata: {
         routeId: loadRequest.routeId,
         loadRequestId: loadRequest.id,
+        decision: dto.decision,
+        ...(generatedPin
+          ? {
+              pin: generatedPin,
+              pinExpiresAt: routeStartPinExpiresAtIso,
+            }
+          : {}),
       },
     });
 
@@ -1759,6 +1769,81 @@ export class SalesRoutesService {
       default:
         return 4;
     }
+  }
+
+  async cancelRoute(routeId: string, salesRepId: string) {
+    const routeRepo = this.salesRouteRepo;
+    const route = await this.requireOwnedRoute(routeId, salesRepId);
+
+    const cancellableStatuses = [
+      SalesRouteStatus.DRAFT,
+      SalesRouteStatus.AWAITING_LOAD_APPROVAL,
+      SalesRouteStatus.APPROVED_TO_START,
+    ];
+
+    if (!cancellableStatuses.includes(route.status as any)) {
+      throw new BadRequestException(
+        'This route cannot be cancelled once it is in progress or already closed.',
+      );
+    }
+
+    route.status = SalesRouteStatus.CANCELLED as any;
+    route.warehouseManagerPinHash = null;
+    route.pinExpiresAt = null;
+    await routeRepo.save(route);
+
+    await this.activityService.logForUser({
+      userId: salesRepId,
+      type: 'SALES_ROUTE_CANCELLED',
+      title: 'Route cancelled',
+      message: 'You cancelled the current route. You can create a new route at any time.',
+      metadata: { routeId: route.id },
+    });
+
+    return { message: 'Route cancelled successfully.' };
+  }
+
+  async requestPinRefresh(routeId: string, salesRepId: string) {
+    const route = await this.requireOwnedRoute(routeId, salesRepId);
+
+    if (route.status !== SalesRouteStatus.APPROVED_TO_START) {
+      throw new BadRequestException(
+        'PIN refresh is only available for routes that are approved to start.',
+      );
+    }
+
+    // Reset status so TM can re-approve and issue a fresh PIN
+    route.status = SalesRouteStatus.AWAITING_LOAD_APPROVAL;
+    route.warehouseManagerPinHash = null;
+    route.pinExpiresAt = null;
+    await this.salesRouteRepo.save(route);
+
+    const managers = await this.findRelevantManagers(route);
+    await Promise.all(
+      managers.map((manager) =>
+        this.activityService.logForUser({
+          userId: manager.id,
+          type: 'ROUTE_PIN_REFRESH_REQUESTED',
+          title: 'Route PIN refresh requested',
+          message:
+            'A sales rep has requested a new start PIN. Please review and re-approve the load request to issue a new PIN.',
+          metadata: { routeId: route.id, salesRepId },
+        }),
+      ),
+    );
+
+    await this.activityService.logForUser({
+      userId: salesRepId,
+      type: 'ROUTE_PIN_REFRESH_SENT',
+      title: 'PIN refresh requested',
+      message:
+        'Your PIN refresh request has been sent to the warehouse manager. You will receive a new PIN once they approve.',
+      metadata: { routeId: route.id },
+    });
+
+    return {
+      message: 'PIN refresh request sent to your warehouse manager.',
+    };
   }
 
   private toStringArray(value: unknown) {
