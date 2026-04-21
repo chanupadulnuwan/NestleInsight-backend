@@ -7,5 +7,11 @@ export class UpdateRouteBeatPlanDto {
   selectedOutletIds: string[];
 
   @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsUUID('4', { each: true })
+  selectedShopOwnerIds?: string[];
+
+  @IsOptional()
   saveTemplate?: boolean;
 }

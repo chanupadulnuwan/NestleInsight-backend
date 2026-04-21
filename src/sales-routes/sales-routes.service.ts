@@ -16,7 +16,10 @@ import { User } from '../users/entities/user.entity';
 import { Vehicle } from '../vehicles/entities/vehicle.entity';
 import { WarehouseInventoryItem } from '../warehouses/entities/warehouse-inventory-item.entity';
 import { Warehouse } from '../warehouses/entities/warehouse.entity';
-import { ApproveLoadRequestDto, LoadRequestDecision } from './dto/approve-load-request.dto';
+import {
+  ApproveLoadRequestDto,
+  LoadRequestDecision,
+} from './dto/approve-load-request.dto';
 import { CloseRouteDto } from './dto/close-route.dto';
 import { ConfirmRouteApprovalPinDto } from './dto/confirm-route-approval-pin.dto';
 import { CreateRouteDto } from './dto/create-route.dto';
@@ -195,13 +198,15 @@ export class SalesRoutesService {
 
     const createdRouteId = await this.salesRoutesRepo.manager.transaction(
       async (manager) => {
-        const existingOpenRoute = await manager.getRepository(SalesRoute).findOne({
-          where: {
-            salesRepId,
-            status: In([...OPEN_ROUTE_STATUSES]),
-          },
-          order: { createdAt: 'DESC' },
-        });
+        const existingOpenRoute = await manager
+          .getRepository(SalesRoute)
+          .findOne({
+            where: {
+              salesRepId,
+              status: In([...OPEN_ROUTE_STATUSES]),
+            },
+            order: { createdAt: 'DESC' },
+          });
 
         if (existingOpenRoute) {
           throw new BadRequestException(
@@ -245,17 +250,17 @@ export class SalesRoutesService {
             );
           }
           if (vehicle.status !== 'ACTIVE') {
-            throw new BadRequestException(
-              'Selected vehicle is not active.',
-            );
+            throw new BadRequestException('Selected vehicle is not active.');
           }
 
-          const vehicleConflict = await manager.getRepository(SalesRoute).findOne({
-            where: {
-              vehicleId: vehicle.id,
-              status: In([...OPEN_ROUTE_STATUSES]),
-            },
-          });
+          const vehicleConflict = await manager
+            .getRepository(SalesRoute)
+            .findOne({
+              where: {
+                vehicleId: vehicle.id,
+                status: In([...OPEN_ROUTE_STATUSES]),
+              },
+            });
 
           if (vehicleConflict) {
             throw new BadRequestException(
@@ -287,7 +292,10 @@ export class SalesRoutesService {
 
     await this.seedBeatPlanForRoute(createdRouteId, salesRep);
 
-    const route = await this.getOwnedRouteWithRelations(createdRouteId, salesRepId);
+    const route = await this.getOwnedRouteWithRelations(
+      createdRouteId,
+      salesRepId,
+    );
 
     await this.activityService.logForUser({
       userId: salesRepId,
@@ -315,23 +323,48 @@ export class SalesRoutesService {
     const route = await this.requireOwnedRoute(routeId, salesRepId);
     this.ensureEditableRoute(route);
 
+    const selectedOutletIds = [...new Set(dto.selectedOutletIds)];
+    const selectedShopOwnerIds = [...new Set(dto.selectedShopOwnerIds ?? [])];
+
+    const materializedShopOutlets =
+      await this.materializeSelectedShopOwnerOutlets(
+        route,
+        salesRepId,
+        selectedShopOwnerIds,
+      );
+    const resolvedSelectedOutletIds = this.uniqueStrings([
+      ...selectedOutletIds,
+      ...materializedShopOutlets.map((outlet) => outlet.id),
+    ]);
+
     const eligibleOutlets = await this.getEligibleOutlets(
       route.territoryId,
       route.warehouseId,
     );
-    const outletMap = new Map(eligibleOutlets.map((outlet) => [outlet.id, outlet]));
-    const selectedOutletIds = [...new Set(dto.selectedOutletIds)];
+    // Include materialized shop outlets so they always pass validation
+    // even if their territory differs from the route's territory
+    const outletMap = new Map<string, Outlet>(
+      [...eligibleOutlets, ...materializedShopOutlets].map((outlet) => [
+        outlet.id,
+        outlet,
+      ]),
+    );
 
-    for (const outletId of selectedOutletIds) {
+    for (const outletId of resolvedSelectedOutletIds) {
       if (!outletMap.has(outletId)) {
         throw new BadRequestException(
-          'One or more selected outlets do not belong to the route territory and warehouse.',
+          'One or more selected outlets do not belong to the route warehouse.',
         );
       }
     }
 
-    const alerts = await this.computeDeliveryAlerts(route.territoryId, route.warehouseId);
-    const alertByOutletId = new Map(alerts.map((alert) => [alert.outletId, alert]));
+    const alerts = await this.computeDeliveryAlerts(
+      route.territoryId,
+      route.warehouseId,
+    );
+    const alertByOutletId = new Map(
+      alerts.map((alert) => [alert.outletId, alert]),
+    );
     const existingItems = await this.beatPlanItemsRepo.find({
       where: { routeId },
       order: { sortOrder: 'ASC', createdAt: 'ASC' },
@@ -341,19 +374,23 @@ export class SalesRoutesService {
     );
 
     const toSave: RouteBeatPlanItem[] = [];
-    for (let index = 0; index < selectedOutletIds.length; index += 1) {
-      const outletId = selectedOutletIds[index];
+    for (let index = 0; index < resolvedSelectedOutletIds.length; index += 1) {
+      const outletId = resolvedSelectedOutletIds[index];
       const outlet = outletMap.get(outletId)!;
       const alert = alertByOutletId.get(outletId);
       const existing = existingByOutletId.get(outletId);
 
-      const item = existing ?? this.beatPlanItemsRepo.create({
-        routeId,
-        outletId,
-        outletNameSnapshot: outlet.outletName,
-        ownerNameSnapshot: outlet.ownerName ?? null,
-        source: alert ? RouteBeatPlanSource.DELIVERY : RouteBeatPlanSource.MANUAL,
-      });
+      const item =
+        existing ??
+        this.beatPlanItemsRepo.create({
+          routeId,
+          outletId,
+          outletNameSnapshot: outlet.outletName,
+          ownerNameSnapshot: outlet.ownerName ?? null,
+          source: alert
+            ? RouteBeatPlanSource.DELIVERY
+            : RouteBeatPlanSource.MANUAL,
+        });
 
       item.outletNameSnapshot = outlet.outletName;
       item.ownerNameSnapshot = outlet.ownerName ?? null;
@@ -369,7 +406,7 @@ export class SalesRoutesService {
 
     for (const item of existingByOutletId.values()) {
       item.isSelected = false;
-      item.sortOrder = selectedOutletIds.length + item.sortOrder + 1;
+      item.sortOrder = resolvedSelectedOutletIds.length + item.sortOrder + 1;
       toSave.push(item);
     }
 
@@ -378,11 +415,11 @@ export class SalesRoutesService {
     }
 
     if (dto.saveTemplate !== false) {
-      await this.upsertBeatPlanTemplate(route, selectedOutletIds);
+      await this.upsertBeatPlanTemplate(route, resolvedSelectedOutletIds);
     }
 
     return {
-      message: 'Best plan updated successfully.',
+      message: 'Beat plan updated successfully.',
       route: await this.serializeRoute(route),
     };
   }
@@ -395,7 +432,10 @@ export class SalesRoutesService {
     const route = await this.requireOwnedRoute(routeId, salesRepId);
     this.ensureEditableRoute(route);
 
-    const alerts = await this.computeDeliveryAlerts(route.territoryId, route.warehouseId);
+    const alerts = await this.computeDeliveryAlerts(
+      route.territoryId,
+      route.warehouseId,
+    );
     const allowedOrderIds = new Set(alerts.flatMap((alert) => alert.orderIds));
     const requestedOrderIds = [...new Set(dto.orderIds)];
 
@@ -849,11 +889,11 @@ export class SalesRoutesService {
 
     const approvedDeliveryStock =
       dto.decision === LoadRequestDecision.ADJUSTED
-        ? dto.adjustedDeliveryStock ?? loadRequest.deliveryStockJson
+        ? (dto.adjustedDeliveryStock ?? loadRequest.deliveryStockJson)
         : loadRequest.deliveryStockJson;
     const approvedFreeSaleStock =
       dto.decision === LoadRequestDecision.ADJUSTED
-        ? dto.adjustedFreeSaleStock ?? loadRequest.freeSaleStockJson
+        ? (dto.adjustedFreeSaleStock ?? loadRequest.freeSaleStockJson)
         : loadRequest.freeSaleStockJson;
 
     let generatedPin: string | null = null;
@@ -896,9 +936,7 @@ export class SalesRoutesService {
           [...approvedDeliveryStock, ...approvedFreeSaleStock],
         );
         generatedPin = this.generatePin();
-        pinExpiresAt = new Date(
-          Date.now() + ROUTE_PIN_TTL_MINUTES * 60 * 1000,
-        );
+        pinExpiresAt = new Date(Date.now() + ROUTE_PIN_TTL_MINUTES * 60 * 1000);
         routeStartPinExpiresAtIso = pinExpiresAt.toISOString();
         route.status = SalesRouteStatus.APPROVED_TO_START;
         route.openingStockJson = this.combineOpeningStock(
@@ -985,7 +1023,9 @@ export class SalesRoutesService {
       throw new BadRequestException('This route is not ready to start.');
     }
     if (!route.warehouseManagerPinHash || !route.pinExpiresAt) {
-      throw new BadRequestException('No active start PIN exists for this route.');
+      throw new BadRequestException(
+        'No active start PIN exists for this route.',
+      );
     }
     if (new Date() > route.pinExpiresAt) {
       throw new BadRequestException('The start PIN has expired.');
@@ -1023,11 +1063,17 @@ export class SalesRoutesService {
     };
   }
 
-  async logReturnItem(routeId: string, salesRepId: string, dto: LogReturnItemDto) {
+  async logReturnItem(
+    routeId: string,
+    salesRepId: string,
+    dto: LogReturnItemDto,
+  ) {
     const route = await this.requireOwnedRoute(routeId, salesRepId);
 
     if (route.status !== SalesRouteStatus.IN_PROGRESS) {
-      throw new BadRequestException('Route must be IN_PROGRESS to log returns.');
+      throw new BadRequestException(
+        'Route must be IN_PROGRESS to log returns.',
+      );
     }
 
     const existing = route.returnItemsJson ?? [];
@@ -1119,7 +1165,10 @@ export class SalesRoutesService {
   }
 
   private async ensureDeliveryApprovalSatisfied(route: SalesRoute) {
-    if (!route.deliveryOrderIdsJson || route.deliveryOrderIdsJson.length === 0) {
+    if (
+      !route.deliveryOrderIdsJson ||
+      route.deliveryOrderIdsJson.length === 0
+    ) {
       return;
     }
 
@@ -1159,7 +1208,10 @@ export class SalesRoutesService {
       salesRep.id,
       eligibleOutlets.map((outlet) => outlet.id),
     );
-    const alerts = await this.computeDeliveryAlerts(route.territoryId, route.warehouseId);
+    const alerts = await this.computeDeliveryAlerts(
+      route.territoryId,
+      route.warehouseId,
+    );
 
     const template = await this.beatPlanTemplatesRepo.findOne({
       where: {
@@ -1175,7 +1227,9 @@ export class SalesRoutesService {
           BEAT_PLAN_TEMPLATE_REAPPLY_DAYS);
 
     const candidateByOutletId = new Map<string, BeatPlanSeed>();
-    const outletById = new Map(eligibleOutlets.map((outlet) => [outlet.id, outlet]));
+    const outletById = new Map(
+      eligibleOutlets.map((outlet) => [outlet.id, outlet]),
+    );
 
     for (const outletId of dueOutletIds) {
       const outlet = outletById.get(outletId);
@@ -1225,7 +1279,8 @@ export class SalesRoutesService {
 
     const beatPlanItems = Array.from(candidateByOutletId.values())
       .sort((left, right) => {
-        const sourceRank = this.sourceRank(left.source) - this.sourceRank(right.source);
+        const sourceRank =
+          this.sourceRank(left.source) - this.sourceRank(right.source);
         if (sourceRank !== 0) {
           return sourceRank;
         }
@@ -1252,16 +1307,11 @@ export class SalesRoutesService {
   }
 
   private async getEligibleOutlets(
-    territoryId: string | null,
+    _territoryId: string | null,
     warehouseId: string,
   ) {
-    if (!territoryId) {
-      return [];
-    }
-
     return this.outletsRepo.find({
       where: {
-        territoryId,
         warehouseId,
         status: OutletStatus.APPROVED,
       },
@@ -1269,6 +1319,176 @@ export class SalesRoutesService {
         outletName: 'ASC',
       },
     });
+  }
+
+  private async getWarehouseShopOutletOptions(route: SalesRoute) {
+    const shopOwners = await this.usersRepo.find({
+      where: {
+        role: Role.SHOP_OWNER,
+        warehouseId: route.warehouseId,
+      },
+      order: {
+        shopName: 'ASC',
+        firstName: 'ASC',
+        lastName: 'ASC',
+      },
+    });
+
+    if (shopOwners.length === 0) {
+      return [];
+    }
+
+    const warehouseOutlets = await this.outletsRepo.find({
+      where: {
+        warehouseId: route.warehouseId,
+        status: OutletStatus.APPROVED,
+      },
+      order: {
+        outletName: 'ASC',
+      },
+    });
+
+    return shopOwners.map((shopOwner) => {
+      const outlet = this.findMatchingOutletForShopOwner(
+        shopOwner,
+        warehouseOutlets,
+      );
+      const ownerName = this.getUserDisplayName(shopOwner);
+
+      return {
+        id: outlet?.id ?? null,
+        outletName:
+          shopOwner.shopName?.trim() || outlet?.outletName || ownerName,
+        ownerName,
+        shopOwnerUserId: shopOwner.id,
+        source: 'WAREHOUSE_SHOP',
+      };
+    });
+  }
+
+  private async materializeSelectedShopOwnerOutlets(
+    route: SalesRoute,
+    salesRepId: string,
+    selectedShopOwnerIds: string[],
+  ) {
+    if (selectedShopOwnerIds.length === 0) {
+      return [];
+    }
+
+    const shopOwners = await this.usersRepo.find({
+      where: {
+        id: In(selectedShopOwnerIds),
+        role: Role.SHOP_OWNER,
+        warehouseId: route.warehouseId,
+      },
+    });
+    const shopOwnerById = new Map(shopOwners.map((user) => [user.id, user]));
+
+    for (const shopOwnerId of selectedShopOwnerIds) {
+      if (!shopOwnerById.has(shopOwnerId)) {
+        throw new BadRequestException(
+          'One or more selected shops do not belong to the route warehouse.',
+        );
+      }
+    }
+
+    const warehouseOutlets = await this.outletsRepo.find({
+      where: {
+        warehouseId: route.warehouseId,
+        status: OutletStatus.APPROVED,
+      },
+    });
+    const materializedByShopOwnerId = new Map<string, Outlet>();
+    const outletsToCreate: Array<{ shopOwnerId: string; outlet: Outlet }> = [];
+
+    for (const shopOwnerId of selectedShopOwnerIds) {
+      const shopOwner = shopOwnerById.get(shopOwnerId)!;
+      const existingOutlet = this.findMatchingOutletForShopOwner(
+        shopOwner,
+        warehouseOutlets,
+      );
+
+      if (existingOutlet) {
+        materializedByShopOwnerId.set(shopOwnerId, existingOutlet);
+        continue;
+      }
+
+      const ownerName = this.getUserDisplayName(shopOwner);
+      const outlet = this.outletsRepo.create({
+        outletName: shopOwner.shopName?.trim() || ownerName,
+        ownerName,
+        ownerPhone: shopOwner.phoneNumber,
+        ownerEmail: shopOwner.email,
+        address: shopOwner.address,
+        territoryId: shopOwner.territoryId ?? route.territoryId,
+        warehouseId: route.warehouseId,
+        latitude: shopOwner.latitude,
+        longitude: shopOwner.longitude,
+        registeredBySalesRepId: salesRepId,
+        status: OutletStatus.APPROVED,
+        rejectionReason: null,
+        reviewedBy: salesRepId,
+        reviewedAt: new Date(),
+      });
+
+      outletsToCreate.push({ shopOwnerId, outlet });
+    }
+
+    if (outletsToCreate.length > 0) {
+      const createdOutlets = await this.outletsRepo.save(
+        outletsToCreate.map((entry) => entry.outlet),
+      );
+      createdOutlets.forEach((outlet, index) => {
+        materializedByShopOwnerId.set(
+          outletsToCreate[index].shopOwnerId,
+          outlet,
+        );
+      });
+    }
+
+    return selectedShopOwnerIds
+      .map((shopOwnerId) => materializedByShopOwnerId.get(shopOwnerId))
+      .filter((outlet): outlet is Outlet => !!outlet);
+  }
+
+  private findMatchingOutletForShopOwner(shopOwner: User, outlets: Outlet[]) {
+    const shopOwnerEmail = this.normalizeLookup(shopOwner.email);
+    const shopOwnerPhone = this.normalizePhone(shopOwner.phoneNumber);
+    const shopName = this.normalizeLookup(shopOwner.shopName);
+
+    return outlets.find((outlet) => {
+      const outletEmail = this.normalizeLookup(outlet.ownerEmail);
+      const outletPhone = this.normalizePhone(outlet.ownerPhone);
+      const outletName = this.normalizeLookup(outlet.outletName);
+
+      return (
+        (!!shopOwnerEmail && shopOwnerEmail === outletEmail) ||
+        (!!shopOwnerPhone && shopOwnerPhone === outletPhone) ||
+        (!!shopName && shopName === outletName)
+      );
+    });
+  }
+
+  private getUserDisplayName(user: User) {
+    return (
+      `${user.firstName ?? ''} ${user.lastName ?? ''}`.trim() ||
+      user.shopName?.trim() ||
+      user.username
+    );
+  }
+
+  private normalizeLookup(value?: string | null) {
+    return value?.trim().toLowerCase() ?? '';
+  }
+
+  private normalizePhone(value?: string | null) {
+    return value?.replace(/\D/g, '') ?? '';
+  }
+
+  private uniqueStrings(values: string[]) {
+    return values.filter(
+      (value, index, array) => array.indexOf(value) === index,
+    );
   }
 
   private async computeDueOutletIds(salesRepId: string, outletIds: string[]) {
@@ -1344,7 +1564,9 @@ export class SalesRoutesService {
     const alertByOutletId = new Map<string, DeliveryAlert>();
 
     for (const order of orders) {
-      const outlet = outletByName.get(order.shopNameSnapshot.trim().toLowerCase());
+      const outlet = outletByName.get(
+        order.shopNameSnapshot.trim().toLowerCase(),
+      );
       if (!outlet) {
         continue;
       }
@@ -1470,14 +1692,19 @@ export class SalesRoutesService {
         }),
       ]);
 
-    const [availableOutlets, allWarehouseOutlets] = await Promise.all([
-      this.getEligibleOutlets(route.territoryId, route.warehouseId),
-      this.outletsRepo.find({
-        where: { warehouseId: route.warehouseId },
-        order: { outletName: 'ASC' },
-        select: ['id', 'outletName', 'ownerName', 'status'],
-      }),
-    ]);
+    const [availableOutlets, allWarehouseOutlets, warehouseShopOutlets] =
+      await Promise.all([
+        this.getEligibleOutlets(route.territoryId, route.warehouseId),
+        this.outletsRepo.find({
+          where: {
+            warehouseId: route.warehouseId,
+            status: OutletStatus.APPROVED,
+          },
+          order: { outletName: 'ASC' },
+          select: ['id', 'outletName', 'ownerName', 'status'],
+        }),
+        this.getWarehouseShopOutletOptions(route),
+      ]);
 
     return {
       id: route.id,
@@ -1513,6 +1740,7 @@ export class SalesRoutesService {
         ownerName: outlet.ownerName,
         status: outlet.status,
       })),
+      warehouseShopOutlets,
       deliveryAlerts: deliveryAlerts.map((alert) => ({
         outletId: alert.outletId,
         outletName: alert.outletName,
@@ -1573,7 +1801,10 @@ export class SalesRoutesService {
     await this.beatPlanTemplatesRepo.save(template);
   }
 
-  private async getOwnedRouteWithRelations(routeId: string, salesRepId: string) {
+  private async getOwnedRouteWithRelations(
+    routeId: string,
+    salesRepId: string,
+  ) {
     const route = await this.salesRoutesRepo.findOne({
       where: {
         id: routeId,
@@ -1712,7 +1943,10 @@ export class SalesRoutesService {
     return Array.from(byProduct.values());
   }
 
-  private normalizeToUnits(quantityCases: number, itemsPerCase = DEFAULT_ITEMS_PER_CASE) {
+  private normalizeToUnits(
+    quantityCases: number,
+    itemsPerCase = DEFAULT_ITEMS_PER_CASE,
+  ) {
     return quantityCases * itemsPerCase;
   }
 
@@ -1723,9 +1957,15 @@ export class SalesRoutesService {
     varianceReason: string | null,
   ): VarianceLine[] {
     const productIds = new Set<string>();
-    const openingByProduct = new Map(openingStock.map((item) => [item.productId, item]));
-    const closingByProduct = new Map(closingStock.map((item) => [item.productId, item]));
-    const returnByProduct = new Map(returnItems.map((item) => [item.productId, item]));
+    const openingByProduct = new Map(
+      openingStock.map((item) => [item.productId, item]),
+    );
+    const closingByProduct = new Map(
+      closingStock.map((item) => [item.productId, item]),
+    );
+    const returnByProduct = new Map(
+      returnItems.map((item) => [item.productId, item]),
+    );
 
     for (const item of openingStock) productIds.add(item.productId);
     for (const item of closingStock) productIds.add(item.productId);
@@ -1739,7 +1979,9 @@ export class SalesRoutesService {
       const openingUnits =
         this.normalizeToUnits(opening?.quantityCases ?? 0) +
         (opening?.quantityUnits ?? 0);
-      const expectedClosingUnits = this.normalizeToUnits(returned?.quantityCases ?? 0);
+      const expectedClosingUnits = this.normalizeToUnits(
+        returned?.quantityCases ?? 0,
+      );
       const actualClosingUnits =
         this.normalizeToUnits(closing?.quantityCases ?? 0) +
         (closing?.quantityUnits ?? 0);
@@ -1761,9 +2003,7 @@ export class SalesRoutesService {
   }
 
   private diffDays(from: Date, to: Date) {
-    return Math.floor(
-      (to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24),
-    );
+    return Math.floor((to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24));
   }
 
   private sourceRank(source: RouteBeatPlanSource) {
@@ -1805,7 +2045,8 @@ export class SalesRoutesService {
       userId: salesRepId,
       type: 'SALES_ROUTE_CANCELLED',
       title: 'Route cancelled',
-      message: 'You cancelled the current route. You can create a new route at any time.',
+      message:
+        'You cancelled the current route. You can create a new route at any time.',
       metadata: { routeId: route.id },
     });
 
