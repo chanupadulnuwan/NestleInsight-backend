@@ -84,9 +84,14 @@ export class OutletsService {
     });
   }
 
-  async getPendingOutlets(): Promise<Outlet[]> {
+  async getPendingOutlets(warehouseId?: string | null): Promise<Outlet[]> {
+    const where: any = { status: OutletStatus.PENDING_APPROVAL };
+    if (warehouseId?.trim()) {
+      where.warehouseId = warehouseId.trim();
+    }
+
     return this.outletsRepo.find({
-      where: { status: OutletStatus.PENDING_APPROVAL },
+      where,
       order: { createdAt: 'ASC' },
     });
   }

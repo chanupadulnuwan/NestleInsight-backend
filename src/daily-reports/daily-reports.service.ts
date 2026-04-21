@@ -9,7 +9,10 @@ import { Repository } from 'typeorm';
 import { ActivityService } from '../activity/activity.service';
 import { Order } from '../orders/entities/order.entity';
 import { SalesIncident } from '../sales-incidents/entities/sales-incident.entity';
-import { SalesRoute, SalesRouteStatus } from '../sales-routes/entities/sales-route.entity';
+import {
+  SalesRoute,
+  SalesRouteStatus,
+} from '../sales-routes/entities/sales-route.entity';
 import { StoreVisit } from '../store-visits/entities/store-visit.entity';
 import { DailyReport, DailyReportStatus } from './entities/daily-report.entity';
 import { GenerateReportDto } from './dto/generate-report.dto';
@@ -98,7 +101,10 @@ export class DailyReportsService {
     });
   }
 
-  async getMyReport(salesRepId: string, reportId: string): Promise<DailyReport> {
+  async getMyReport(
+    salesRepId: string,
+    reportId: string,
+  ): Promise<DailyReport> {
     const report = await this.reportsRepo.findOne({
       where: { id: reportId, salesRepId },
     });
@@ -118,9 +124,7 @@ export class DailyReportsService {
     const report = await this.getMyReport(salesRepId, reportId);
 
     if (report.status !== DailyReportStatus.DRAFT) {
-      throw new BadRequestException(
-        'Only draft reports can be updated.',
-      );
+      throw new BadRequestException('Only draft reports can be updated.');
     }
 
     report.repComments = dto.repComments?.trim() || null;
@@ -215,27 +219,48 @@ export class DailyReportsService {
         where: { salesRepId, routeId: route.id },
         order: { createdAt: 'ASC' },
       }),
-      this.ordersRepo.find({
-        where: { userId: salesRepId },
-        order: { placedAt: 'ASC' },
-      }),
+      this.ordersRepo
+        .createQueryBuilder('salesOrder')
+        .where('salesOrder.customerNote LIKE :routeMarker', {
+          routeMarker: `%Route: ${route.id}%`,
+        })
+        .orderBy('salesOrder.placedAt', 'ASC')
+        .getMany(),
     ]);
 
-    const routeOrders = salesRepOrders.filter((order) =>
-      (order.customerNote ?? '').includes(`Route: ${route.id}`),
+    const routeOrders = salesRepOrders;
+    const completedVisits = visits.filter(
+      (visit) => visit.status === 'COMPLETED',
     );
-    const completedVisits = visits.filter((visit) => visit.status === 'COMPLETED');
     const routeReturnItems = Array.isArray(route.returnItemsJson)
       ? route.returnItemsJson
       : [];
+    const normalizedReturnItems = routeReturnItems.map((item) =>
+      this.normalizeReturnItem(item),
+    );
     const totalReturnedCases = routeReturnItems.reduce<number>(
-      (sum, item) => sum + Number((item as Record<string, unknown>).quantityCases ?? 0),
+      (sum, item) =>
+        sum + Number((item as Record<string, unknown>).quantityCases ?? 0),
+      0,
+    );
+    const totalReturnedUnits = normalizedReturnItems.reduce<number>(
+      (sum, item) => sum + item.quantityUnits,
       0,
     );
     const totalVisitDurationSeconds = completedVisits.reduce<number>(
       (sum, visit) => sum + (visit.durationSeconds ?? 0),
       0,
     );
+    const routeDurationSeconds = route.startedAt
+      ? Math.max(
+          0,
+          Math.floor(
+            ((route.closedAt ?? new Date()).getTime() -
+              route.startedAt.getTime()) /
+              1000,
+          ),
+        )
+      : 0;
     const visitsWithOsaNotes = completedVisits.filter((visit) =>
       this.hasVisitOsaData(visit.osaIssuesJson),
     );
@@ -245,6 +270,31 @@ export class DailyReportsService {
     );
     const visitsWithFeedback = completedVisits.filter(
       (visit) => !!visit.outletFeedback?.trim(),
+    );
+    const visitRows = visits.map((visit) =>
+      this.serializeVisitForReport(visit),
+    );
+    const osaIssueRows = completedVisits.flatMap((visit) =>
+      this.serializeVisitIssues(visit),
+    );
+    const incidentRows = incidents.map((incident) => ({
+      incidentId: incident.id,
+      type: incident.incidentType,
+      incidentType: incident.incidentType,
+      severity: incident.severity,
+      description: incident.description,
+      shopId: incident.shopId,
+      orderId: incident.orderId,
+      createdAt: incident.createdAt.toISOString(),
+      time: incident.createdAt.toISOString(),
+    }));
+    const incidentsBySeverity = this.countBy(
+      incidents,
+      (incident) => incident.severity,
+    );
+    const incidentsByType = this.countBy(
+      incidents,
+      (incident) => incident.incidentType,
     );
 
     return {
@@ -256,39 +306,64 @@ export class DailyReportsService {
         vehicleId: route.vehicleId,
         startedAt: route.startedAt?.toISOString() ?? null,
         closedAt: route.closedAt?.toISOString() ?? null,
+        totalRouteDurationSeconds: routeDurationSeconds,
+        totalRouteDurationMinutes: Math.round(routeDurationSeconds / 60),
+        fieldDurationMinutes: Math.round(routeDurationSeconds / 60),
+        openingStockLines: Array.isArray(route.openingStockJson)
+          ? route.openingStockJson.length
+          : 0,
         openingStockLineCount: Array.isArray(route.openingStockJson)
           ? route.openingStockJson.length
+          : 0,
+        openingStockCases: this.sumCases(route.openingStockJson),
+        closingStockLines: Array.isArray(route.closingStockJson)
+          ? route.closingStockJson.length
           : 0,
         closingStockLineCount: Array.isArray(route.closingStockJson)
           ? route.closingStockJson.length
           : 0,
+        closingStockCases: this.sumCases(route.closingStockJson),
         varianceLineCount: Array.isArray(route.varianceJson)
           ? route.varianceJson.length
           : 0,
+        hasVariance: Array.isArray(route.varianceJson)
+          ? route.varianceJson.length > 0
+          : false,
         returnLineCount: routeReturnItems.length,
+        totalReturnedCases,
+        totalReturnedUnits,
       },
       visitSummaryJson: {
         totalVisits: visits.length,
         completedVisits: completedVisits.length,
+        inProgressVisits: visits.length - completedVisits.length,
         totalVisitDurationSeconds,
         totalVisitDurationMinutes: Math.round(totalVisitDurationSeconds / 60),
-        visitedShops: visits.map((visit) => ({
-          visitId: visit.id,
-          shopId: visit.shopId,
-          shopName: visit.shopNameSnapshot,
-          status: visit.status,
-          durationSeconds: visit.durationSeconds ?? 0,
-        })),
+        totalDurationMinutes: Math.round(totalVisitDurationSeconds / 60),
+        photoCount: visits.reduce(
+          (sum, visit) => sum + (visit.photoUrls?.length ?? 0),
+          0,
+        ),
+        feedbackCount: visitsWithFeedback.length,
+        outlets: visitRows,
+        visitedShops: visitRows,
       },
       osaSummaryJson: {
-        visitsWithPlanogramOk: completedVisits.filter((visit) => visit.planogramOk === true)
-          .length,
-        visitsWithPosmOk: completedVisits.filter((visit) => visit.posmOk === true)
-          .length,
+        visitsWithPlanogramOk: completedVisits.filter(
+          (visit) => visit.planogramOk === true,
+        ).length,
+        visitsWithPosmOk: completedVisits.filter(
+          (visit) => visit.posmOk === true,
+        ).length,
         visitsWithOsaNotes: visitsWithOsaNotes.length,
         totalOsaIssueEntries: osaIssueCount,
+        issueCount: osaIssueRows.length,
+        outletCountWithIssues: visitsWithOsaNotes.length,
+        issues: osaIssueRows,
         visitsWithFeedback: visitsWithFeedback.length,
+        feedbackCount: visitsWithFeedback.length,
         feedbackSamples: visitsWithFeedback.slice(0, 5).map((visit) => ({
+          outletName: visit.shopNameSnapshot,
           shopName: visit.shopNameSnapshot,
           feedback: visit.outletFeedback,
         })),
@@ -296,7 +371,9 @@ export class DailyReportsService {
       deliverySummaryJson: {
         assistedOrderCount: routeOrders.length,
         totalOrderValue: Number(
-          routeOrders.reduce((sum, order) => sum + Number(order.totalAmount ?? 0), 0).toFixed(2),
+          routeOrders
+            .reduce((sum, order) => sum + Number(order.totalAmount ?? 0), 0)
+            .toFixed(2),
         ),
         orderCodes: routeOrders.map((order) => order.orderCode),
         orders: routeOrders.map((order) => ({
@@ -310,23 +387,17 @@ export class DailyReportsService {
       returnSummaryJson: {
         returnLineCount: routeReturnItems.length,
         totalReturnedCases,
-        items: routeReturnItems,
+        totalReturnedUnits,
+        totalReturnedProducts: totalReturnedUnits,
+        items: normalizedReturnItems,
       },
       incidentSummaryJson: {
         incidentCount: incidents.length,
-        incidentsBySeverity: {
-          LOW: incidents.filter((incident) => incident.severity === 'LOW').length,
-          MEDIUM: incidents.filter((incident) => incident.severity === 'MEDIUM').length,
-          HIGH: incidents.filter((incident) => incident.severity === 'HIGH').length,
-          CRITICAL: incidents.filter((incident) => incident.severity === 'CRITICAL').length,
-        },
-        incidents: incidents.map((incident) => ({
-          incidentId: incident.id,
-          type: incident.incidentType,
-          severity: incident.severity,
-          description: incident.description,
-          createdAt: incident.createdAt.toISOString(),
-        })),
+        incidentsBySeverity,
+        incidentsByType,
+        bySeverity: incidentsBySeverity,
+        byType: incidentsByType,
+        incidents: incidentRows,
       },
     };
   }
@@ -353,5 +424,115 @@ export class DailyReportsService {
     }
 
     return 0;
+  }
+
+  private serializeVisitForReport(visit: StoreVisit) {
+    const startedAt = visit.visitStartTime ?? visit.visitStartedAt;
+    const endedAt = visit.visitEndTime ?? visit.visitEndedAt;
+
+    return {
+      visitId: visit.id,
+      shopId: visit.shopId,
+      outletId: visit.shopId,
+      shopName: visit.shopNameSnapshot,
+      outletName: visit.shopNameSnapshot,
+      territoryId: visit.territoryId,
+      status: visit.status,
+      startedAt: startedAt?.toISOString?.() ?? null,
+      endedAt: endedAt?.toISOString?.() ?? null,
+      visitStartedAt: visit.visitStartedAt?.toISOString?.() ?? null,
+      visitEndedAt: visit.visitEndedAt?.toISOString?.() ?? null,
+      durationSeconds: visit.durationSeconds ?? 0,
+      durationMinutes: visit.durationMinutes ?? 0,
+      hasPendingDelivery: visit.hasPendingDelivery,
+      planogramOk: visit.planogramOk,
+      posmOk: visit.posmOk,
+      outletFeedback: visit.outletFeedback,
+      competitorNotes: visit.competitorNotes,
+      lastOrderDate: visit.lastOrderDateSnapshot?.toISOString?.() ?? null,
+      shelfStock: visit.shelfStockJson ?? [],
+      backroomStock: visit.backroomStockJson ?? [],
+      osaIssues: visit.osaIssuesJson ?? [],
+      promotions: visit.promotionsJson ?? [],
+      expiryItems: visit.expiryItemsJson ?? [],
+      planogramAnswers: visit.planogramAnswersJson ?? [],
+      outletFeedbackAnswers: visit.outletFeedbackAnswersJson ?? [],
+      estimatedSellThrough: visit.estimatedSellThroughJson ?? [],
+      suggestedOrder: visit.suggestedOrderJson ?? null,
+      photoUrls: visit.photoUrls ?? [],
+      photoCount: visit.photoUrls?.length ?? 0,
+    };
+  }
+
+  private serializeVisitIssues(visit: StoreVisit) {
+    const rawIssues = Array.isArray(visit.osaIssuesJson)
+      ? visit.osaIssuesJson
+      : [];
+
+    return rawIssues.map((issue) => {
+      const record = issue as unknown as Record<string, unknown>;
+      return {
+        visitId: visit.id,
+        shopId: visit.shopId,
+        shopName: visit.shopNameSnapshot,
+        outletName: visit.shopNameSnapshot,
+        productId: record.productId ?? null,
+        productName: record.productName ?? record.name ?? null,
+        issueType: record.issueType ?? record.type ?? 'OSA_ISSUE',
+        note: record.notes ?? record.note ?? '',
+        feedback: record.notes ?? record.note ?? '',
+      };
+    });
+  }
+
+  private normalizeReturnItem(item: unknown) {
+    const record = item as Record<string, unknown>;
+    const notes = record.notes?.toString() ?? null;
+    const legacyUnits = this.readLegacyUnitQuantity(notes);
+    const rawCases = Number(record.quantityCases ?? 0);
+    const rawUnits = Number(record.quantityUnits ?? 0);
+    const quantityCases = legacyUnits !== null ? 0 : rawCases;
+    const quantityUnits = rawUnits > 0 ? rawUnits : (legacyUnits ?? 0);
+
+    return {
+      productId: record.productId ?? null,
+      productName: record.productName ?? 'Returned item',
+      quantityCases,
+      quantityUnits,
+      unitType:
+        record.unitType ??
+        (quantityUnits > 0 && quantityCases === 0 ? 'UNIT' : 'CASE'),
+      reason: record.reason ?? 'RETURNED',
+      notes,
+      loggedAt: record.loggedAt ?? null,
+    };
+  }
+
+  private readLegacyUnitQuantity(notes: string | null) {
+    if (!notes) {
+      return null;
+    }
+
+    const match = notes.match(/Entered as product units:\s*(\d+)/i);
+    return match ? Number(match[1]) : null;
+  }
+
+  private sumCases(lines: unknown) {
+    if (!Array.isArray(lines)) {
+      return 0;
+    }
+
+    return lines.reduce<number>((sum, line) => {
+      const record = line as Record<string, unknown>;
+      return sum + Number(record.quantityCases ?? 0);
+    }, 0);
+  }
+
+  private countBy<T>(items: T[], selector: (item: T) => string) {
+    return items.reduce<Record<string, number>>((acc, item) => {
+      const key = selector(item);
+      acc[key] = (acc[key] ?? 0) + 1;
+      return acc;
+    }, {});
   }
 }

@@ -11,7 +11,10 @@ import { ActivityService } from '../activity/activity.service';
 import { Role } from '../common/enums/role.enum';
 import { Order } from '../orders/entities/order.entity';
 import { Outlet, OutletStatus } from '../outlets/entities/outlet.entity';
-import { StoreVisit } from '../store-visits/entities/store-visit.entity';
+import {
+  StoreVisit,
+  StoreVisitStatus,
+} from '../store-visits/entities/store-visit.entity';
 import { User } from '../users/entities/user.entity';
 import { Vehicle } from '../vehicles/entities/vehicle.entity';
 import { WarehouseInventoryItem } from '../warehouses/entities/warehouse-inventory-item.entity';
@@ -570,6 +573,16 @@ export class SalesRoutesService {
     }
     this.ensureManagerOwnsRoute(manager, approvalRequest.route);
 
+    const decisionNotes = dto.notes?.trim() ?? '';
+    if (
+      dto.decision === RouteApprovalRequestStatus.REJECTED &&
+      !decisionNotes
+    ) {
+      throw new BadRequestException(
+        'Enter a rejection reason before rejecting the delivery request.',
+      );
+    }
+
     let rawPin: string | null = null;
     let expiresAt: Date | null = null;
     const requestedOrderIds = this.toStringArray(
@@ -577,7 +590,7 @@ export class SalesRoutesService {
     );
 
     approvalRequest.status = dto.decision;
-    approvalRequest.decisionNote = dto.notes?.trim() ?? null;
+    approvalRequest.decisionNote = decisionNotes || null;
     approvalRequest.reviewedBy = managerId;
     approvalRequest.reviewedAt = new Date();
 
@@ -618,10 +631,11 @@ export class SalesRoutesService {
       message:
         dto.decision === RouteApprovalRequestStatus.APPROVED
           ? 'TM approved your ready-for-delivery request. Enter the PIN to continue.'
-          : 'TM denied the ready-for-delivery request. Those deliveries cannot be included in this route.',
+          : `TM denied the ready-for-delivery request. Reason: ${decisionNotes}`,
       metadata: {
         routeId: approvalRequest.routeId,
         approvalRequestId: approvalRequest.id,
+        ...(decisionNotes ? { notes: decisionNotes } : {}),
         ...(rawPin
           ? {
               pin: rawPin,
@@ -887,6 +901,13 @@ export class SalesRoutesService {
     }
     this.ensureManagerOwnsRoute(manager, loadRequest.route);
 
+    const decisionNotes = dto.notes?.trim() ?? '';
+    if (dto.decision === LoadRequestDecision.REJECTED && !decisionNotes) {
+      throw new BadRequestException(
+        'Enter a rejection reason before rejecting the load request.',
+      );
+    }
+
     const approvedDeliveryStock =
       dto.decision === LoadRequestDecision.ADJUSTED
         ? (dto.adjustedDeliveryStock ?? loadRequest.deliveryStockJson)
@@ -920,7 +941,7 @@ export class SalesRoutesService {
             : VanLoadRequestStatus.APPROVED;
       loadRequest.deliveryStockJson = approvedDeliveryStock;
       loadRequest.freeSaleStockJson = approvedFreeSaleStock;
-      loadRequest.managerNotes = dto.notes?.trim() ?? null;
+      loadRequest.managerNotes = decisionNotes || null;
       loadRequest.reviewedBy = managerId;
       loadRequest.reviewedAt = new Date();
 
@@ -930,11 +951,13 @@ export class SalesRoutesService {
         route.warehouseManagerPinHash = null;
         route.pinExpiresAt = null;
       } else {
-        await this.reserveInventoryForApprovedLoad(
-          inventoryRepo,
-          route.warehouseId,
-          [...approvedDeliveryStock, ...approvedFreeSaleStock],
-        );
+        if (!route.openingStockJson || route.openingStockJson.length === 0) {
+          await this.reserveInventoryForApprovedLoad(
+            inventoryRepo,
+            route.warehouseId,
+            [...approvedDeliveryStock, ...approvedFreeSaleStock],
+          );
+        }
         generatedPin = this.generatePin();
         pinExpiresAt = new Date(Date.now() + ROUTE_PIN_TTL_MINUTES * 60 * 1000);
         routeStartPinExpiresAtIso = pinExpiresAt.toISOString();
@@ -966,12 +989,13 @@ export class SalesRoutesService {
           : 'Van load request approved',
       message:
         dto.decision === LoadRequestDecision.REJECTED
-          ? 'Your van load request was rejected. Review the notes and resubmit.'
+          ? `Your van load request was rejected. Reason: ${decisionNotes}`
           : 'Your van load request was approved and the route is now ready to start.',
       metadata: {
         routeId: loadRequest.routeId,
         loadRequestId: loadRequest.id,
         decision: dto.decision,
+        ...(decisionNotes ? { notes: decisionNotes } : {}),
         ...(generatedPin
           ? {
               pin: generatedPin,
@@ -1043,6 +1067,8 @@ export class SalesRoutesService {
 
     route.status = SalesRouteStatus.IN_PROGRESS;
     route.startedAt = new Date();
+    route.warehouseManagerPinHash = null;
+    route.pinExpiresAt = null;
 
     const savedRoute = await this.salesRoutesRepo.save(route);
 
@@ -1076,11 +1102,21 @@ export class SalesRoutesService {
       );
     }
 
+    const quantityCases = dto.quantityCases ?? 0;
+    const quantityUnits = dto.quantityUnits ?? 0;
+    if (quantityCases <= 0 && quantityUnits <= 0) {
+      throw new BadRequestException(
+        'Enter at least one returned case or product unit.',
+      );
+    }
+
     const existing = route.returnItemsJson ?? [];
     existing.push({
       productId: dto.productId,
       productName: dto.productName,
-      quantityCases: dto.quantityCases,
+      quantityCases,
+      quantityUnits,
+      unitType: dto.unitType ?? (quantityUnits > 0 ? 'UNIT' : 'CASE'),
       reason: dto.reason,
       notes: dto.notes ?? null,
       loggedAt: new Date().toISOString(),
@@ -1092,7 +1128,7 @@ export class SalesRoutesService {
       userId: salesRepId,
       type: 'RETURN_ITEM_LOGGED',
       title: 'Return item logged',
-      message: `${dto.quantityCases} case(s) of "${dto.productName}" were logged for return.`,
+      message: `${this.formatReturnQuantity(quantityCases, quantityUnits)} of "${dto.productName}" were logged for return.`,
       metadata: { routeId, productId: dto.productId },
     });
 
@@ -1105,8 +1141,15 @@ export class SalesRoutesService {
     if (route.status !== SalesRouteStatus.IN_PROGRESS) {
       throw new BadRequestException('Only in-progress routes can be closed.');
     }
-    if (!route.warehouseManagerPinHash) {
-      throw new BadRequestException('No route PIN is stored for this route.');
+    if (!route.warehouseManagerPinHash || !route.pinExpiresAt) {
+      throw new BadRequestException(
+        'Request a route-end handover PIN before closing this route.',
+      );
+    }
+    if (new Date() > route.pinExpiresAt) {
+      throw new BadRequestException(
+        'The route-end handover PIN has expired. Request a new PIN.',
+      );
     }
 
     const isValidPin = await bcrypt.compare(
@@ -1125,6 +1168,10 @@ export class SalesRoutesService {
     );
 
     route.closingStockJson = dto.closingStock;
+    route.returnItemsJson = this.mergeRouteReturnItems(
+      route.returnItemsJson ?? [],
+      dto.returnItems,
+    );
     route.varianceJson = variance;
     route.status = SalesRouteStatus.CLOSED;
     route.closedAt = new Date();
@@ -1672,25 +1719,79 @@ export class SalesRoutesService {
   }
 
   private async serializeRoute(route: SalesRoute) {
-    const [beatPlanItems, deliveryAlerts, loadRequest, deliveryApproval] =
-      await Promise.all([
-        this.beatPlanItemsRepo.find({
-          where: { routeId: route.id },
-          order: { sortOrder: 'ASC', createdAt: 'ASC' },
-        }),
-        this.computeDeliveryAlerts(route.territoryId, route.warehouseId),
-        this.vanLoadRequestsRepo.findOne({
-          where: { routeId: route.id },
-          order: { createdAt: 'DESC' },
-        }),
-        this.approvalRequestsRepo.findOne({
-          where: {
-            routeId: route.id,
-            type: RouteApprovalRequestType.DELIVERY_ORDERS,
-          },
-          order: { createdAt: 'DESC' },
-        }),
-      ]);
+    const [
+      beatPlanItems,
+      deliveryAlerts,
+      loadRequest,
+      deliveryApproval,
+      completedVisits,
+    ] = await Promise.all([
+      this.beatPlanItemsRepo.find({
+        where: { routeId: route.id },
+        order: { sortOrder: 'ASC', createdAt: 'ASC' },
+      }),
+      this.computeDeliveryAlerts(route.territoryId, route.warehouseId),
+      this.vanLoadRequestsRepo.findOne({
+        where: { routeId: route.id },
+        order: { createdAt: 'DESC' },
+      }),
+      this.approvalRequestsRepo.findOne({
+        where: {
+          routeId: route.id,
+          type: RouteApprovalRequestType.DELIVERY_ORDERS,
+        },
+        order: { createdAt: 'DESC' },
+      }),
+      this.storeVisitsRepo
+        .createQueryBuilder('visit')
+        .select('visit.shopId', 'shopId')
+        .where('visit.routeId = :routeId', { routeId: route.id })
+        .andWhere('visit.shopId IS NOT NULL')
+        .andWhere(
+          '(UPPER(visit.status) = :completedStatus OR visit.visitEndedAt IS NOT NULL)',
+          { completedStatus: StoreVisitStatus.COMPLETED },
+        )
+        .getRawMany<{ shopId: string }>(),
+    ]);
+    const completedOutletIds = new Set(
+      completedVisits
+        .map((visit) => visit.shopId?.toString())
+        .filter((shopId): shopId is string => !!shopId),
+    );
+    const selectedBeatPlanOutletIds = beatPlanItems
+      .filter((item) => item.isSelected)
+      .map((item) => item.outletId)
+      .filter((outletId) => !!outletId);
+    if (
+      selectedBeatPlanOutletIds.length > 0 &&
+      completedOutletIds.size < selectedBeatPlanOutletIds.length
+    ) {
+      const routeStartedAt = route.startedAt ?? route.createdAt;
+      const fallbackCompletedVisits = await this.storeVisitsRepo
+        .createQueryBuilder('visit')
+        .select('visit.shopId', 'shopId')
+        .where('visit.salesRepId = :salesRepId', {
+          salesRepId: route.salesRepId,
+        })
+        .andWhere('visit.shopId IN (:...outletIds)', {
+          outletIds: selectedBeatPlanOutletIds,
+        })
+        .andWhere(
+          '(visit.routeId = :routeId OR visit.visitStartedAt >= :routeStartedAt)',
+          { routeId: route.id, routeStartedAt },
+        )
+        .andWhere(
+          '(UPPER(visit.status) = :completedStatus OR visit.visitEndedAt IS NOT NULL)',
+          { completedStatus: StoreVisitStatus.COMPLETED },
+        )
+        .getRawMany<{ shopId: string }>();
+
+      for (const visit of fallbackCompletedVisits) {
+        if (visit.shopId) {
+          completedOutletIds.add(visit.shopId.toString());
+        }
+      }
+    }
 
     const [availableOutlets, allWarehouseOutlets, warehouseShopOutlets] =
       await Promise.all([
@@ -1717,6 +1818,7 @@ export class SalesRoutesService {
       startedAt: route.startedAt,
       closedAt: route.closedAt,
       routeStartPinExpiresAt: route.pinExpiresAt,
+      returnItems: route.returnItemsJson ?? [],
       deliveryOrderIds: route.deliveryOrderIdsJson ?? [],
       beatPlanItems: beatPlanItems.map((item) => ({
         id: item.id,
@@ -1725,6 +1827,9 @@ export class SalesRoutesService {
         ownerName: item.ownerNameSnapshot,
         source: item.source,
         isSelected: item.isSelected,
+        visitStatus: completedOutletIds.has(item.outletId)
+          ? StoreVisitStatus.COMPLETED
+          : 'PENDING',
         hasPendingDelivery: item.hasPendingDelivery,
         pendingDeliveryCount: item.pendingDeliveryCount,
         orderIds: item.pendingDeliveryOrderIdsJson ?? [],
@@ -1873,11 +1978,12 @@ export class SalesRoutesService {
       },
     });
 
-    return managers.filter(
+    const matchedManagers = managers.filter(
       (manager) =>
         manager.warehouseId === route.warehouseId ||
         (!!route.territoryId && manager.territoryId === route.territoryId),
     );
+    return matchedManagers.length > 0 ? matchedManagers : managers;
   }
 
   private buildLoadRequestManagerMessage(
@@ -1896,6 +2002,17 @@ export class SalesRoutesService {
 
   private generatePin() {
     return Math.floor(100000 + Math.random() * 900000).toString();
+  }
+
+  private formatReturnQuantity(quantityCases: number, quantityUnits: number) {
+    const parts: string[] = [];
+    if (quantityCases > 0) {
+      parts.push(`${quantityCases} case(s)`);
+    }
+    if (quantityUnits > 0) {
+      parts.push(`${quantityUnits} product unit(s)`);
+    }
+    return parts.join(' and ') || 'Returned stock';
   }
 
   private combineVanLoadLines(lines: VanLoadRequestStockLine[]) {
@@ -1979,9 +2096,9 @@ export class SalesRoutesService {
       const openingUnits =
         this.normalizeToUnits(opening?.quantityCases ?? 0) +
         (opening?.quantityUnits ?? 0);
-      const expectedClosingUnits = this.normalizeToUnits(
-        returned?.quantityCases ?? 0,
-      );
+      const expectedClosingUnits =
+        this.normalizeToUnits(returned?.quantityCases ?? 0) +
+        (returned?.quantityUnits ?? 0);
       const actualClosingUnits =
         this.normalizeToUnits(closing?.quantityCases ?? 0) +
         (closing?.quantityUnits ?? 0);
@@ -2000,6 +2117,47 @@ export class SalesRoutesService {
         varianceReason,
       };
     });
+  }
+
+  private mergeRouteReturnItems(
+    existingItems: any[],
+    submittedItems: CloseRouteDto['returnItems'],
+  ) {
+    const merged: any[] = [];
+    const seen = new Set<string>();
+
+    const add = (item: any) => {
+      const normalized = {
+        productId: item.productId,
+        productName: item.productName,
+        quantityCases: Number(item.quantityCases ?? 0),
+        quantityUnits: Number(item.quantityUnits ?? 0),
+        unitType:
+          item.unitType ??
+          (Number(item.quantityUnits ?? 0) > 0 ? 'UNIT' : 'CASE'),
+        reason: item.reason,
+        notes: item.notes ?? null,
+        loggedAt: item.loggedAt ?? new Date().toISOString(),
+      };
+      const key = [
+        normalized.productId,
+        normalized.productName,
+        normalized.quantityCases,
+        normalized.quantityUnits,
+        normalized.reason,
+        normalized.notes ?? '',
+      ].join('|');
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      merged.push(normalized);
+    };
+
+    for (const item of existingItems ?? []) add(item);
+    for (const item of submittedItems ?? []) add(item);
+
+    return merged;
   }
 
   private diffDays(from: Date, to: Date) {
@@ -2056,28 +2214,106 @@ export class SalesRoutesService {
   async requestPinRefresh(routeId: string, salesRepId: string) {
     const route = await this.requireOwnedRoute(routeId, salesRepId);
 
-    if (route.status !== SalesRouteStatus.APPROVED_TO_START) {
+    if (route.status === SalesRouteStatus.IN_PROGRESS) {
+      const rawPin = this.generatePin();
+      const pinExpiresAt = new Date(
+        Date.now() + ROUTE_PIN_TTL_MINUTES * 60 * 1000,
+      );
+
+      route.warehouseManagerPinHash = await bcrypt.hash(
+        rawPin,
+        BCRYPT_ROUNDS,
+      );
+      route.pinExpiresAt = pinExpiresAt;
+      await this.salesRoutesRepo.save(route);
+
+      const managers = await this.findRelevantManagers(route);
+      await Promise.all(
+        managers.map((manager) =>
+          this.activityService.logForUser({
+            userId: manager.id,
+            type: 'ROUTE_HANDOVER_PIN_GENERATED',
+            title: 'Route handover PIN generated',
+            message: `Route handover PIN is ${rawPin}. Share this with the sales rep to close the route. Expires in ${ROUTE_PIN_TTL_MINUTES} minutes.`,
+            metadata: {
+              routeId: route.id,
+              salesRepId,
+              pin: rawPin,
+              expiresAt: pinExpiresAt.toISOString(),
+            },
+          }),
+        ),
+      );
+
+      await this.activityService.logForUser({
+        userId: salesRepId,
+        type: 'ROUTE_HANDOVER_PIN_REQUESTED',
+        title: 'Route handover PIN requested',
+        message:
+          'A route handover PIN was sent to your territory manager. Ask them for the 6-digit code to close this route.',
+        metadata: { routeId: route.id, expiresAt: pinExpiresAt.toISOString() },
+      });
+
+      return {
+        message:
+          'Route handover PIN sent to the territory manager activity center.',
+      };
+    }
+
+    if (
+      route.status !== SalesRouteStatus.APPROVED_TO_START &&
+      route.status !== SalesRouteStatus.AWAITING_LOAD_APPROVAL
+    ) {
       throw new BadRequestException(
-        'PIN refresh is only available for routes that are approved to start.',
+        'Start PIN requests are only available after a load request is waiting for approval.',
       );
     }
 
-    // Reset status so TM can re-approve and issue a fresh PIN
-    route.status = SalesRouteStatus.AWAITING_LOAD_APPROVAL;
-    route.warehouseManagerPinHash = null;
-    route.pinExpiresAt = null;
-    await this.salesRoutesRepo.save(route);
+    const loadRequest = await this.vanLoadRequestsRepo.findOne({
+      where: { routeId: route.id },
+      order: { createdAt: 'DESC' },
+    });
+
+    if (!loadRequest) {
+      throw new BadRequestException(
+        'Create a van load request before requesting a start PIN.',
+      );
+    }
+
+    if (route.status === SalesRouteStatus.APPROVED_TO_START) {
+      route.status = SalesRouteStatus.AWAITING_LOAD_APPROVAL;
+      route.warehouseManagerPinHash = null;
+      route.pinExpiresAt = null;
+
+      loadRequest.status = VanLoadRequestStatus.PENDING;
+      loadRequest.reviewedBy = null;
+      loadRequest.reviewedAt = null;
+      loadRequest.managerNotes = null;
+
+      await this.salesRoutesRepo.manager.transaction(async (managerEntity) => {
+        await managerEntity.getRepository(SalesRoute).save(route);
+        await managerEntity.getRepository(VanLoadRequest).save(loadRequest);
+      });
+    } else if (loadRequest.status !== VanLoadRequestStatus.PENDING) {
+      throw new BadRequestException(
+        'Update and resubmit the van load request before requesting a new start PIN.',
+      );
+    }
 
     const managers = await this.findRelevantManagers(route);
     await Promise.all(
       managers.map((manager) =>
         this.activityService.logForUser({
           userId: manager.id,
-          type: 'ROUTE_PIN_REFRESH_REQUESTED',
-          title: 'Route PIN refresh requested',
+          type: 'ROUTE_LOAD_REQUEST_PENDING',
+          title: 'Start route PIN requested',
           message:
-            'A sales rep has requested a new start PIN. Please review and re-approve the load request to issue a new PIN.',
-          metadata: { routeId: route.id, salesRepId },
+            'A sales rep has requested a route-start PIN. Review and approve the pending van load request to generate the PIN.',
+          metadata: {
+            routeId: route.id,
+            salesRepId,
+            loadRequestId: loadRequest.id,
+          },
         }),
       ),
     );
@@ -2085,14 +2321,14 @@ export class SalesRoutesService {
     await this.activityService.logForUser({
       userId: salesRepId,
       type: 'ROUTE_PIN_REFRESH_SENT',
-      title: 'PIN refresh requested',
+      title: 'Start PIN requested',
       message:
-        'Your PIN refresh request has been sent to the warehouse manager. You will receive a new PIN once they approve.',
-      metadata: { routeId: route.id },
+        'Your start PIN request has been sent to the warehouse manager. You will receive a PIN once they approve the load request.',
+      metadata: { routeId: route.id, loadRequestId: loadRequest.id },
     });
 
     return {
-      message: 'PIN refresh request sent to your warehouse manager.',
+      message: 'Start PIN request sent to your warehouse manager.',
     };
   }
 

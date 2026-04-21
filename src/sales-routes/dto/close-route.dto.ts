@@ -40,8 +40,22 @@ export class CloseRouteReturnItemDto {
   @Min(0)
   quantityCases: number;
 
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @IsOptional()
+  quantityUnits?: number;
+
+  @IsString()
+  @IsOptional()
+  unitType?: string;
+
   @IsString()
   reason: string;
+
+  @IsString()
+  @IsOptional()
+  notes?: string;
 }
 
 export class CloseRouteDto {

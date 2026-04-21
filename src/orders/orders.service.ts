@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
@@ -11,7 +15,10 @@ import { ProductStatus } from '../common/enums/product-status.enum';
 import { Role } from '../common/enums/role.enum';
 import { Outlet } from '../outlets/entities/outlet.entity';
 import { Product } from '../products/entities/product.entity';
-import { SalesRoute, SalesRouteStatus } from '../sales-routes/entities/sales-route.entity';
+import {
+  SalesRoute,
+  SalesRouteStatus,
+} from '../sales-routes/entities/sales-route.entity';
 import { User } from '../users/entities/user.entity';
 import { UsersService } from '../users/users.service';
 import { ConfirmAssistedOrderPinDto } from './dto/confirm-assisted-order-pin.dto';
@@ -76,7 +83,7 @@ export class OrdersService {
     private readonly salesRoutesRepository: Repository<SalesRoute>,
     private readonly usersService: UsersService,
     private readonly activityService: ActivityService,
-  ) { }
+  ) {}
 
   async createCurrentUserOrder(userId: string, createOrderDto: CreateOrderDto) {
     const user = await this.requireShopOwner(userId);
@@ -119,9 +126,7 @@ export class OrdersService {
     });
 
     const totalAmount = Number(
-      normalizedItems
-        .reduce((sum, item) => sum + item.lineTotal, 0)
-        .toFixed(2),
+      normalizedItems.reduce((sum, item) => sum + item.lineTotal, 0).toFixed(2),
     );
 
     const order = this.ordersRepository.create({
@@ -131,6 +136,7 @@ export class OrdersService {
       territoryId: user.territoryId,
       warehouseId: user.warehouseId,
       status: 'PLACED',
+      source: 'SALES_REP',
       currencyCode: 'LKR',
       totalAmount,
       items: normalizedItems,
@@ -229,13 +235,17 @@ export class OrdersService {
     options?: SalesRepOrderOptions,
   ) {
     const salesRep = await this.requireSalesRep(salesRepId);
-    const route = await this.requireOwnedInProgressRoute(dto.routeId, salesRepId);
+    const route = await this.requireOwnedInProgressRoute(
+      dto.routeId,
+      salesRepId,
+    );
     const outlet = await this.requireOutlet(dto.shopId);
-    const normalizedItems = await this.buildNormalizedSalesRepOrderItems(dto.items);
-    const targetShopOwner =
-      options?.targetCustomerUserId
-        ? await this.requireActiveShopOwner(options.targetCustomerUserId)
-        : null;
+    const normalizedItems = await this.buildNormalizedSalesRepOrderItems(
+      dto.items,
+    );
+    const targetShopOwner = options?.targetCustomerUserId
+      ? await this.requireActiveShopOwner(options.targetCustomerUserId)
+      : null;
     const orderOwner = targetShopOwner ?? salesRep;
     const totalAmount = Number(
       normalizedItems.reduce((sum, item) => sum + item.lineTotal, 0).toFixed(2),
@@ -268,21 +278,25 @@ export class OrdersService {
         salesRep.warehouseId ??
         null,
       status: 'PLACED',
+      source: 'SALES_REP',
       currencyCode: 'LKR',
       totalAmount,
       placedAt: new Date(),
       customerNote: customerNoteSegments.join(' | '),
-      items: normalizedItems.map((item) => ({
-        productId: item.productId,
-        skuSnapshot: item.skuSnapshot,
-        productNameSnapshot: item.productNameSnapshot,
-        packSizeSnapshot: item.packSizeSnapshot,
-        imageUrlSnapshot: item.imageUrlSnapshot,
-        casePriceSnapshot: item.casePriceSnapshot,
-        quantity: item.quantity,
-        lineTotal: item.lineTotal,
-        product: item.product,
-      } as any)),
+      items: normalizedItems.map(
+        (item) =>
+          ({
+            productId: item.productId,
+            skuSnapshot: item.skuSnapshot,
+            productNameSnapshot: item.productNameSnapshot,
+            packSizeSnapshot: item.packSizeSnapshot,
+            imageUrlSnapshot: item.imageUrlSnapshot,
+            casePriceSnapshot: item.casePriceSnapshot,
+            quantity: item.quantity,
+            lineTotal: item.lineTotal,
+            product: item.product,
+          }) as any,
+      ),
     });
 
     const savedOrder = await this.ordersRepository.save(order);
@@ -336,8 +350,13 @@ export class OrdersService {
     const salesRep = await this.requireSalesRep(salesRepId);
     await this.requireOwnedInProgressRoute(dto.routeId, salesRepId);
     const outlet = await this.requireOutlet(dto.shopId);
-    const normalizedItems = await this.buildNormalizedSalesRepOrderItems(dto.items);
-    const shopOwnerMatch = await this.resolveActiveShopOwnerForOutlet(outlet);
+    const normalizedItems = await this.buildNormalizedSalesRepOrderItems(
+      dto.items,
+    );
+    const wasCreatedByThisSalesRep = outlet.registeredBySalesRepId === salesRepId;
+    const shopOwnerMatch = wasCreatedByThisSalesRep
+      ? null
+      : await this.resolveActiveShopOwnerForOutlet(outlet);
     const salesRepDisplayName =
       `${salesRep.firstName ?? ''} ${salesRep.lastName ?? ''}`.trim() ||
       salesRep.username;
@@ -345,32 +364,46 @@ export class OrdersService {
       normalizedItems.reduce((sum, item) => sum + item.lineTotal, 0).toFixed(2),
     );
 
-    if (!shopOwnerMatch) {
-      const draftActivity = await this.activityService.logForUser({
+    if (wasCreatedByThisSalesRep || !shopOwnerMatch) {
+      const bypassReason = wasCreatedByThisSalesRep
+        ? 'SALES_REP_CREATED_OUTLET'
+        : 'ACTIVE_SHOP_OWNER_NOT_FOUND';
+      const result = await this.createSalesRepOrder(salesRepId, dto, {
+        assistedReason:
+          wasCreatedByThisSalesRep
+            ? 'Captured during store visit for a sales-rep-created outlet.'
+            : 'Captured during store visit; no active shop owner app account is linked to this outlet.',
+        shopNameSnapshot: outlet.outletName,
+      });
+
+      await this.activityService.logForUser({
         userId: salesRepId,
-        type: 'ASSISTED_ORDER_DRAFT_SAVED',
-        title: 'Assisted order saved as draft',
-        message: `No active shop owner app account was found for ${outlet.outletName}, so the order was saved as a draft for follow-up.`,
+        type: 'ASSISTED_ORDER_CONFIRMED_WITHOUT_PIN',
+        title: 'Assisted order placed without PIN',
+        message: wasCreatedByThisSalesRep
+          ? `${result.order.orderCode} was placed for sales-rep-created outlet ${outlet.outletName} without PIN confirmation.`
+          : `No active shop owner app account was found for ${outlet.outletName}, so ${result.order.orderCode} was placed without PIN confirmation.`,
         metadata: {
-          status: 'DRAFT',
+          status: 'CONFIRMED',
           routeId: dto.routeId,
           shopId: dto.shopId,
           shopName: outlet.outletName,
-          items: dto.items.map((item) => ({
-            productId: item.productId,
-            quantity: item.quantity,
-          })),
+          orderId: result.order.id,
+          orderCode: result.order.orderCode,
           itemCount: dto.items.length,
           totalAmount,
-          draftReason: 'ACTIVE_SHOP_OWNER_NOT_FOUND',
-        } satisfies AssistedOrderRequestMetadata & Record<string, unknown>,
+          confirmationBypassedReason: bypassReason,
+        },
       });
 
       return {
-        message:
-          'No active shop owner account was linked to this outlet. The order was saved as a draft so you can follow up later.',
-        assistedOrderRequestId: draftActivity.id,
-        status: 'DRAFT',
+        message: wasCreatedByThisSalesRep
+          ? 'This outlet was registered by you, so the assisted order was placed without shop-owner PIN confirmation.'
+          : 'No active shop owner account was linked to this outlet. The assisted order was placed without PIN confirmation.',
+        order: result.order,
+        orderId: result.order.id,
+        orderCode: result.order.orderCode,
+        status: 'CONFIRMED',
         requiresPin: false,
         expiresAt: null,
       };
@@ -454,12 +487,18 @@ export class OrdersService {
       throw new NotFoundException('Assisted order request not found.');
     }
 
-    const metadata = this.readAssistedOrderRequestMetadata(requestActivity.metadata);
+    const metadata = this.readAssistedOrderRequestMetadata(
+      requestActivity.metadata,
+    );
 
     if (metadata.status === 'CONFIRMED' && metadata.confirmedOrderId) {
-      const existingOrder = await this.findSerializedOrderById(metadata.confirmedOrderId);
+      const existingOrder = await this.findSerializedOrderById(
+        metadata.confirmedOrderId,
+      );
       if (!existingOrder) {
-        throw new NotFoundException('The confirmed assisted order could not be found.');
+        throw new NotFoundException(
+          'The confirmed assisted order could not be found.',
+        );
       }
 
       return {
@@ -469,16 +508,22 @@ export class OrdersService {
     }
 
     if (metadata.status !== 'PENDING_SHOP_PIN') {
-      throw new BadRequestException('This assisted order request is no longer awaiting a PIN.');
+      throw new BadRequestException(
+        'This assisted order request is no longer awaiting a PIN.',
+      );
     }
 
     if (new Date(metadata.pinExpiresAt).getTime() < Date.now()) {
-      throw new BadRequestException('The assisted order confirmation PIN has expired.');
+      throw new BadRequestException(
+        'The assisted order confirmation PIN has expired.',
+      );
     }
 
     const isValidPin = await bcrypt.compare(dto.pin, metadata.pinHash);
     if (!isValidPin) {
-      throw new BadRequestException('Incorrect assisted order confirmation PIN.');
+      throw new BadRequestException(
+        'Incorrect assisted order confirmation PIN.',
+      );
     }
 
     const result = await this.createSalesRepOrder(
@@ -554,7 +599,10 @@ export class OrdersService {
     return user;
   }
 
-  private async requireOwnedInProgressRoute(routeId: string, salesRepId: string) {
+  private async requireOwnedInProgressRoute(
+    routeId: string,
+    salesRepId: string,
+  ) {
     const route = await this.salesRoutesRepository.findOne({
       where: { id: routeId, salesRepId },
     });
@@ -573,7 +621,9 @@ export class OrdersService {
   }
 
   private async requireOutlet(shopId: string) {
-    const outlet = await this.outletsRepository.findOne({ where: { id: shopId } });
+    const outlet = await this.outletsRepository.findOne({
+      where: { id: shopId },
+    });
 
     if (!outlet) {
       throw new NotFoundException('Outlet not found.');
@@ -593,7 +643,9 @@ export class OrdersService {
     const products = await this.productsRepository.find({
       where: { id: In(productIds) },
     });
-    const productsById = new Map(products.map((product) => [product.id, product]));
+    const productsById = new Map(
+      products.map((product) => [product.id, product]),
+    );
 
     return items.map((item) => {
       const product = productsById.get(item.productId);
@@ -650,15 +702,21 @@ export class OrdersService {
       user.accountStatus !== AccountStatus.ACTIVE ||
       user.approvalStatus !== ApprovalStatus.APPROVED
     ) {
-      throw new BadRequestException('The linked shop owner account is not active.');
+      throw new BadRequestException(
+        'The linked shop owner account is not active.',
+      );
     }
 
     return user;
   }
 
-  private readAssistedOrderRequestMetadata(metadata: Record<string, unknown> | null) {
+  private readAssistedOrderRequestMetadata(
+    metadata: Record<string, unknown> | null,
+  ) {
     if (!metadata) {
-      throw new BadRequestException('Assisted order request metadata is missing.');
+      throw new BadRequestException(
+        'Assisted order request metadata is missing.',
+      );
     }
 
     const routeId = metadata.routeId?.toString();
@@ -675,7 +733,9 @@ export class OrdersService {
       const quantity = Number(value.quantity ?? 0);
 
       if (!productId || !Number.isInteger(quantity) || quantity <= 0) {
-        throw new BadRequestException('Assisted order request contains invalid item data.');
+        throw new BadRequestException(
+          'Assisted order request contains invalid item data.',
+        );
       }
 
       return { productId, quantity };
@@ -690,7 +750,9 @@ export class OrdersService {
       !pinExpiresAt ||
       items.length === 0
     ) {
-      throw new BadRequestException('Assisted order request metadata is incomplete.');
+      throw new BadRequestException(
+        'Assisted order request metadata is incomplete.',
+      );
     }
 
     return {
@@ -791,14 +853,16 @@ export class OrdersService {
     }
 
     const rankedMatches = [...candidates.values()]
-      .filter(({ user }) =>
-        user.role === Role.SHOP_OWNER &&
-        user.accountStatus === AccountStatus.ACTIVE &&
-        user.approvalStatus === ApprovalStatus.APPROVED,
+      .filter(
+        ({ user }) =>
+          user.role === Role.SHOP_OWNER &&
+          user.accountStatus === AccountStatus.ACTIVE &&
+          user.approvalStatus === ApprovalStatus.APPROVED,
       )
-      .sort((left, right) =>
-        this.getShopOwnerMatchScore(right.matchSource) -
-        this.getShopOwnerMatchScore(left.matchSource),
+      .sort(
+        (left, right) =>
+          this.getShopOwnerMatchScore(right.matchSource) -
+          this.getShopOwnerMatchScore(left.matchSource),
       );
 
     return rankedMatches[0] ?? null;

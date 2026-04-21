@@ -47,8 +47,8 @@ export class OutletsController {
   @Get('pending')
   @UseGuards(RolesGuard)
   @Roles(Role.REGIONAL_MANAGER)
-  getPendingOutlets() {
-    return this.outletsService.getPendingOutlets();
+  getPendingOutlets(@Req() req: any) {
+    return this.outletsService.getPendingOutlets(req.user?.warehouseId);
   }
 
   @Patch(':id/review')

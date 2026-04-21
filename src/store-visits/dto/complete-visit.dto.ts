@@ -53,6 +53,16 @@ export class VisitOsaIssueDto {
   tag: string;
 
   @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  productIds?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  productNames?: string[];
+
+  @IsOptional()
   @IsString()
   notes?: string;
 }
