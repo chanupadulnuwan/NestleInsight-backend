@@ -9,9 +9,14 @@ import { In, Repository } from 'typeorm';
 
 import { ActivityService } from '../activity/activity.service';
 import { Role } from '../common/enums/role.enum';
+import { RouteBeatPlanItem } from '../sales-routes/entities/route-beat-plan-item.entity';
 import { RouteSession } from '../sales-routes/entities/route-session.entity';
 import { RoutePlanStop } from '../sales-routes/entities/route-plan-stop.entity';
 import { RouteStopEvent } from '../sales-routes/entities/route-stop-event.entity';
+import {
+  SalesRoute,
+  SalesRouteStatus,
+} from '../sales-routes/entities/sales-route.entity';
 import { Outlet } from '../outlets/entities/outlet.entity';
 import { User } from '../users/entities/user.entity';
 
@@ -43,10 +48,7 @@ type SerializedRouteStop = {
   priorityBand: string;
   etaMinutes: number | null;
   distanceKm: number | null;
-  recommendation:
-    | 'resume-current-visit'
-    | 'next-best-stop'
-    | 'follow-sequence';
+  recommendation: 'resume-current-visit' | 'next-best-stop' | 'follow-sequence';
 };
 
 type SerializedRouteProgress = {
@@ -72,16 +74,27 @@ export class SmartRouteService {
     private readonly outletRepo: Repository<Outlet>,
     @InjectRepository(User)
     private readonly userRepo: Repository<User>,
+    @InjectRepository(SalesRoute)
+    private readonly salesRouteRepo: Repository<SalesRoute>,
+    @InjectRepository(RouteBeatPlanItem)
+    private readonly beatPlanItemRepo: Repository<RouteBeatPlanItem>,
     private readonly activityService: ActivityService,
   ) {}
 
-  async getOrCreateSession(userId: string, role: string, date: Date, territoryId: string) {
+  async getOrCreateSession(
+    userId: string,
+    role: string,
+    date: Date,
+    territoryId: string,
+    routeId?: string,
+  ) {
     const startOfDay = new Date(date);
     startOfDay.setHours(0, 0, 0, 0);
     const endOfDay = new Date(date);
     endOfDay.setHours(23, 59, 59, 999);
 
-    let session = await this.sessionRepo.createQueryBuilder('session')
+    let session = await this.sessionRepo
+      .createQueryBuilder('session')
       .where('session.userId = :userId', { userId })
       .andWhere('session.routeDate >= :startOfDay', { startOfDay })
       .andWhere('session.routeDate <= :endOfDay', { endOfDay })
@@ -96,39 +109,121 @@ export class SmartRouteService {
         status: 'pending',
       });
       session = await this.sessionRepo.save(session);
+    }
 
-      // Load assigned outlet list
-      const outlets = await this.outletRepo.find({
-        where: { registeredBySalesRepId: userId },
-      });
-
-      // Create Route Plan Stops based on assignments
-      const stopsToCreate = outlets.map((outlet, index) => {
-        return this.stopRepo.create({
-          routeSessionId: session!.id,
-          outletId: outlet.id,
-          suggestedSeq: index + 1,
-          purpose: 'Visit',
-          status: 'pending',
-        });
-      });
-
-      if (stopsToCreate.length > 0) {
-        await this.stopRepo.save(stopsToCreate);
-      }
+    if (role === Role.SALES_REP) {
+      await this.syncSalesRepBeatPlanStops(session, userId, routeId);
     }
 
     return this.buildSessionResponse(session);
   }
 
-  private getDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  private async syncSalesRepBeatPlanStops(
+    session: RouteSession,
+    userId: string,
+    routeId?: string,
+  ) {
+    const route = await this.findSalesRepRouteForSmartRoute(userId, routeId);
+    if (!route) {
+      return;
+    }
+
+    if (route.territoryId && session.territoryId !== route.territoryId) {
+      session.territoryId = route.territoryId;
+      await this.sessionRepo.save(session);
+    }
+
+    const beatPlanItems = await this.beatPlanItemRepo.find({
+      where: { routeId: route.id, isSelected: true },
+      order: { sortOrder: 'ASC', createdAt: 'ASC' },
+    });
+
+    const existingStops = await this.stopRepo.find({
+      where: { routeSessionId: session.id },
+      order: { suggestedSeq: 'ASC' },
+    });
+    const existingByOutletId = new Map(
+      existingStops.map((stop) => [stop.outletId, stop]),
+    );
+    const selectedOutletIds = new Set(
+      beatPlanItems.map((item) => item.outletId),
+    );
+
+    const stopsToSave: RoutePlanStop[] = [];
+    for (let index = 0; index < beatPlanItems.length; index += 1) {
+      const item = beatPlanItems[index];
+      const existing = existingByOutletId.get(item.outletId);
+      const stop =
+        existing ??
+        this.stopRepo.create({
+          routeSessionId: session.id,
+          outletId: item.outletId,
+          status: 'pending',
+        });
+
+      stop.suggestedSeq = index + 1;
+      stop.purpose = item.hasPendingDelivery
+        ? 'Visit + delivery'
+        : 'Store visit';
+      stopsToSave.push(stop);
+    }
+
+    const stopsToDelete = existingStops
+      .filter((stop) => !selectedOutletIds.has(stop.outletId))
+      .map((stop) => stop.id);
+
+    if (stopsToDelete.length > 0) {
+      await this.stopRepo.delete({ id: In(stopsToDelete) });
+    }
+
+    if (stopsToSave.length > 0) {
+      await this.stopRepo.save(stopsToSave);
+    }
+  }
+
+  private async findSalesRepRouteForSmartRoute(
+    userId: string,
+    routeId?: string,
+  ) {
+    if (routeId?.trim()) {
+      const route = await this.salesRouteRepo.findOne({
+        where: { id: routeId.trim(), salesRepId: userId },
+      });
+
+      if (route) {
+        return route;
+      }
+    }
+
+    return this.salesRouteRepo.findOne({
+      where: {
+        salesRepId: userId,
+        status: In([
+          SalesRouteStatus.DRAFT,
+          SalesRouteStatus.AWAITING_LOAD_APPROVAL,
+          SalesRouteStatus.APPROVED_TO_START,
+          SalesRouteStatus.IN_PROGRESS,
+        ]),
+      },
+      order: { createdAt: 'DESC' },
+    });
+  }
+
+  private getDistance(
+    lat1: number,
+    lon1: number,
+    lat2: number,
+    lon2: number,
+  ): number {
     const R = 6371; // radius in km
     const dLat = (lat2 - lat1) * (Math.PI / 180);
     const dLon = (lon2 - lon1) * (Math.PI / 180);
     const a =
       Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos(lat1 * (Math.PI / 180)) * Math.cos(lat2 * (Math.PI / 180)) *
-      Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      Math.cos(lat1 * (Math.PI / 180)) *
+        Math.cos(lat2 * (Math.PI / 180)) *
+        Math.sin(dLon / 2) *
+        Math.sin(dLon / 2);
     const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
     return R * c;
   }
@@ -151,11 +246,7 @@ export class SmartRouteService {
       const outlet = await this.outletRepo.findOne({
         where: { id: currentStop.outletId },
       });
-      return this.serializeStop(
-        currentStop,
-        outlet,
-        'resume-current-visit',
-      );
+      return this.serializeStop(currentStop, outlet, 'resume-current-visit');
     }
 
     const pendingStops = await this.stopRepo.find({
@@ -192,11 +283,13 @@ export class SmartRouteService {
       const outlet = outletMap.get(stop.outletId);
 
       let distanceKm = 10;
-      if (
-        outlet?.latitude != null &&
-        outlet.longitude != null
-      ) {
-        distanceKm = this.getDistance(currentLat, currentLng, outlet.latitude, outlet.longitude);
+      if (outlet?.latitude != null && outlet.longitude != null) {
+        distanceKm = this.getDistance(
+          currentLat,
+          currentLng,
+          outlet.latitude,
+          outlet.longitude,
+        );
       }
 
       const deliveryUrgency = 0.5;
@@ -204,7 +297,11 @@ export class SmartRouteService {
       const outletPriority = 0.5;
       const distanceScore = Math.max(0, 1 - distanceKm / 50);
 
-      const priorityScore = (deliveryUrgency * 0.35) + (distanceScore * 0.25) + (visitFrequencyDue * 0.20) + (outletPriority * 0.20);
+      const priorityScore =
+        deliveryUrgency * 0.35 +
+        distanceScore * 0.25 +
+        visitFrequencyDue * 0.2 +
+        outletPriority * 0.2;
 
       stop.priorityScore = Number(priorityScore.toFixed(2));
       stop.distanceKm = Number(distanceKm.toFixed(2));
@@ -213,7 +310,16 @@ export class SmartRouteService {
       return stop;
     });
 
-    scoredStops.sort((a, b) => (b.priorityScore || 0) - (a.priorityScore || 0));
+    scoredStops.sort((a, b) => {
+      const distanceComparison =
+        Number(a.distanceKm ?? Number.MAX_SAFE_INTEGER) -
+        Number(b.distanceKm ?? Number.MAX_SAFE_INTEGER);
+      if (distanceComparison !== 0) {
+        return distanceComparison;
+      }
+
+      return a.suggestedSeq - b.suggestedSeq;
+    });
 
     await this.stopRepo.save(scoredStops);
 
@@ -225,9 +331,18 @@ export class SmartRouteService {
     );
   }
 
-  async skipStop(stopId: string, reasonCode: string, freeText: string, userId: string, lat?: number, lng?: number) {
+  async skipStop(
+    stopId: string,
+    reasonCode: string,
+    freeText: string,
+    userId: string,
+    lat?: number,
+    lng?: number,
+  ) {
     if (reasonCode === 'OTHER' && freeText.trim().length < 5) {
-      throw new BadRequestException('Enter a short reason when selecting Other.');
+      throw new BadRequestException(
+        'Enter a short reason when selecting Other.',
+      );
     }
 
     const stop = await this.getOwnedStopOrThrow(stopId, userId);
@@ -268,7 +383,9 @@ export class SmartRouteService {
 
     await this.refreshSessionStatus(stop.routeSessionId);
 
-    const outlet = await this.outletRepo.findOne({ where: { id: stop.outletId } });
+    const outlet = await this.outletRepo.findOne({
+      where: { id: stop.outletId },
+    });
     return this.serializeStop(stop, outlet, 'resume-current-visit');
   }
 
@@ -290,7 +407,9 @@ export class SmartRouteService {
 
     await this.refreshSessionStatus(stop.routeSessionId);
 
-    const outlet = await this.outletRepo.findOne({ where: { id: stop.outletId } });
+    const outlet = await this.outletRepo.findOne({
+      where: { id: stop.outletId },
+    });
     return this.serializeStop(stop, outlet, 'resume-current-visit');
   }
 
@@ -526,12 +645,14 @@ export class SmartRouteService {
     }
 
     const skippedByName =
-      `${skippedBy.firstName} ${skippedBy.lastName}`.trim() || skippedBy.username;
+      `${skippedBy.firstName} ${skippedBy.lastName}`.trim() ||
+      skippedBy.username;
     const reasonLabel = this.formatSkipReason(reasonCode);
     const note = freeText.trim();
-    const message = note.length > 0
-      ? `${skippedByName} skipped ${outlet.outletName}. Reason: ${reasonLabel}. Note: ${note}`
-      : `${skippedByName} skipped ${outlet.outletName}. Reason: ${reasonLabel}.`;
+    const message =
+      note.length > 0
+        ? `${skippedByName} skipped ${outlet.outletName}. Reason: ${reasonLabel}. Note: ${note}`
+        : `${skippedByName} skipped ${outlet.outletName}. Reason: ${reasonLabel}.`;
 
     const targetUsers = recipients.filter((user) => {
       if (user.role === Role.ADMIN) {
@@ -547,10 +668,10 @@ export class SmartRouteService {
 
       if (
         user.role === Role.REGIONAL_MANAGER &&
-        (
-          (outlet.warehouseId != null && user.warehouseId === outlet.warehouseId) ||
-          (session.territoryId != null && user.territoryId === session.territoryId)
-        )
+        ((outlet.warehouseId != null &&
+          user.warehouseId === outlet.warehouseId) ||
+          (session.territoryId != null &&
+            user.territoryId === session.territoryId))
       ) {
         return true;
       }

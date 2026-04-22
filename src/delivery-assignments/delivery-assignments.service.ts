@@ -76,27 +76,39 @@ export class DeliveryAssignmentsService {
   async createAssignment(tmUserId: string, dto: CreateAssignmentDto) {
     const tm = await this.usersRepo.findOne({ where: { id: tmUserId } });
     if (!tm || !tm.warehouseId) {
-      throw new BadRequestException('Territory manager is not assigned to a warehouse.');
+      throw new BadRequestException(
+        'Territory manager is not assigned to a warehouse.',
+      );
     }
 
-    const distributor = await this.usersRepo.findOne({ where: { id: dto.distributorId } });
+    const distributor = await this.usersRepo.findOne({
+      where: { id: dto.distributorId },
+    });
     if (!distributor || distributor.role !== Role.TERRITORY_DISTRIBUTOR) {
       throw new BadRequestException('Invalid distributor.');
     }
     if (distributor.warehouseId !== tm.warehouseId) {
-      throw new BadRequestException('Distributor does not belong to your warehouse.');
+      throw new BadRequestException(
+        'Distributor does not belong to your warehouse.',
+      );
     }
 
     let vehicle: Vehicle | null = null;
     if (dto.vehicleId) {
-      vehicle = await this.vehiclesRepo.findOne({ where: { id: dto.vehicleId } });
+      vehicle = await this.vehiclesRepo.findOne({
+        where: { id: dto.vehicleId },
+      });
       if (!vehicle || vehicle.warehouseId !== tm.warehouseId) {
-        throw new BadRequestException('Vehicle does not belong to your warehouse.');
+        throw new BadRequestException(
+          'Vehicle does not belong to your warehouse.',
+        );
       }
     }
 
     const uniqueOrderIds = [...new Set(dto.orderIds)];
-    const orders = await this.ordersRepo.find({ where: { id: In(uniqueOrderIds) } });
+    const orders = await this.ordersRepo.find({
+      where: { id: In(uniqueOrderIds) },
+    });
     if (orders.length !== uniqueOrderIds.length) {
       throw new BadRequestException('One or more orders were not found.');
     }
@@ -105,7 +117,10 @@ export class DeliveryAssignmentsService {
     if (overdueOrders.length > 0) {
       await Promise.all(
         overdueOrders.map((order) =>
-          this.ordersRepo.update(order.id, createAutomaticDelayPatch(order.placedAt)),
+          this.ordersRepo.update(
+            order.id,
+            createAutomaticDelayPatch(order.placedAt),
+          ),
         ),
       );
 
@@ -116,7 +131,9 @@ export class DeliveryAssignmentsService {
 
     for (const order of orders) {
       if (order.warehouseId !== tm.warehouseId) {
-        throw new BadRequestException(`Order ${order.orderCode} does not belong to your warehouse.`);
+        throw new BadRequestException(
+          `Order ${order.orderCode} does not belong to your warehouse.`,
+        );
       }
       if (!isProceedOrderStatus(order.status)) {
         throw new BadRequestException(
@@ -125,7 +142,10 @@ export class DeliveryAssignmentsService {
       }
     }
 
-    const stockCheck = await this.buildStockReservationCheck(tm.warehouseId, orders);
+    const stockCheck = await this.buildStockReservationCheck(
+      tm.warehouseId,
+      orders,
+    );
     if (stockCheck.shortages.length > 0) {
       throw new BadRequestException(stockCheck.shortages[0]);
     }
@@ -136,71 +156,78 @@ export class DeliveryAssignmentsService {
       );
     }
 
-    const deliveryDate = dto.deliveryDate ?? new Date().toISOString().split('T')[0];
+    const deliveryDate =
+      dto.deliveryDate ?? new Date().toISOString().split('T')[0];
     const plainPins: Array<{ orderId: string; pin: string }> = [];
 
-    const assignmentResult = await this.ordersRepo.manager.transaction(async (manager) => {
-      const assignmentRepo = manager.getRepository(DeliveryAssignment);
-      const assignmentOrderRepo = manager.getRepository(DeliveryAssignmentOrder);
-      const inventoryRepo = manager.getRepository(WarehouseInventoryItem);
-      const orderRepo = manager.getRepository(Order);
+    const assignmentResult = await this.ordersRepo.manager.transaction(
+      async (manager) => {
+        const assignmentRepo = manager.getRepository(DeliveryAssignment);
+        const assignmentOrderRepo = manager.getRepository(
+          DeliveryAssignmentOrder,
+        );
+        const inventoryRepo = manager.getRepository(WarehouseInventoryItem);
+        const orderRepo = manager.getRepository(Order);
 
-      const refillAlerts = await this.reserveWarehouseStock(
-        inventoryRepo,
-        tm.warehouseId!,
-        stockCheck.reservations,
-      );
-
-      const assignment = assignmentRepo.create({
-        territoryManagerId: tmUserId,
-        distributorId: dto.distributorId,
-        vehicleId: dto.vehicleId ?? null,
-        deliveryDate,
-        status: 'ACTIVE',
-        notes: dto.notes ?? null,
-      });
-      const savedAssignment = await assignmentRepo.save(assignment);
-
-      const pinExpiry = new Date(Date.now() + PIN_TTL_HOURS * 3600 * 1000);
-      const assignmentOrders: DeliveryAssignmentOrder[] = [];
-
-      for (let index = 0; index < uniqueOrderIds.length; index += 1) {
-        const order = orders.find((entry) => entry.id === uniqueOrderIds[index])!;
-        const rawPin = generatePin();
-        const pinHash = await bcrypt.hash(rawPin, 10);
-
-        plainPins.push({ orderId: order.id, pin: rawPin });
-        assignmentOrders.push(
-          assignmentOrderRepo.create({
-            assignmentId: savedAssignment.id,
-            orderId: order.id,
-            sortOrder: index,
-            shopPinHash: pinHash,
-            shopPinExpiresAt: pinExpiry,
-          }),
+        const refillAlerts = await this.reserveWarehouseStock(
+          inventoryRepo,
+          tm.warehouseId!,
+          stockCheck.reservations,
         );
 
-        await orderRepo.update(order.id, {
-          status: 'ASSIGNED',
-          assignmentId: savedAssignment.id,
-          customerNote: this.buildDeliveryStartedNote(
-            order.orderCode,
-            distributor,
-            vehicle,
-            deliveryDate,
-          ),
-          delayReason: null,
-          delayedAt: null,
-          delayedBy: null,
+        const assignment = assignmentRepo.create({
+          territoryManagerId: tmUserId,
+          distributorId: dto.distributorId,
+          vehicleId: dto.vehicleId ?? null,
+          deliveryDate,
+          status: 'ACTIVE',
+          notes: dto.notes ?? null,
         });
-      }
+        const savedAssignment = await assignmentRepo.save(assignment);
 
-      await assignmentOrderRepo.save(assignmentOrders);
-      return {
-        assignmentId: savedAssignment.id,
-        refillAlerts,
-      };
-    });
+        const pinExpiry = new Date(Date.now() + PIN_TTL_HOURS * 3600 * 1000);
+        const assignmentOrders: DeliveryAssignmentOrder[] = [];
+
+        for (let index = 0; index < uniqueOrderIds.length; index += 1) {
+          const order = orders.find(
+            (entry) => entry.id === uniqueOrderIds[index],
+          )!;
+          const rawPin = generatePin();
+          const pinHash = await bcrypt.hash(rawPin, 10);
+
+          plainPins.push({ orderId: order.id, pin: rawPin });
+          assignmentOrders.push(
+            assignmentOrderRepo.create({
+              assignmentId: savedAssignment.id,
+              orderId: order.id,
+              sortOrder: index,
+              shopPinHash: pinHash,
+              shopPinExpiresAt: pinExpiry,
+            }),
+          );
+
+          await orderRepo.update(order.id, {
+            status: 'ASSIGNED',
+            assignmentId: savedAssignment.id,
+            customerNote: this.buildDeliveryStartedNote(
+              order.orderCode,
+              distributor,
+              vehicle,
+              deliveryDate,
+            ),
+            delayReason: null,
+            delayedAt: null,
+            delayedBy: null,
+          });
+        }
+
+        await assignmentOrderRepo.save(assignmentOrders);
+        return {
+          assignmentId: savedAssignment.id,
+          refillAlerts,
+        };
+      },
+    );
 
     const savedAssignmentId = assignmentResult.assignmentId;
 
@@ -221,7 +248,8 @@ export class DeliveryAssignmentsService {
             orderCode: order.orderCode,
             assignmentId: savedAssignmentId,
             distributorId: distributor.id,
-            distributorName: `${distributor.firstName} ${distributor.lastName}`.trim(),
+            distributorName:
+              `${distributor.firstName} ${distributor.lastName}`.trim(),
             vehicleId: vehicle?.id ?? null,
             vehicleLabel: vehicle?.label ?? null,
             deliveryDate,
@@ -251,7 +279,11 @@ export class DeliveryAssignmentsService {
 
     const result = await this.assignmentsRepo.findOne({
       where: { id: savedAssignmentId },
-      relations: { assignmentOrders: { order: true }, distributor: true, vehicle: true },
+      relations: {
+        assignmentOrders: { order: true },
+        distributor: true,
+        vehicle: true,
+      },
     });
 
     return {
@@ -265,7 +297,9 @@ export class DeliveryAssignmentsService {
     const assignment = await this.requireAssignment(assignmentId);
 
     if (assignment.territoryManagerId !== tmUserId) {
-      throw new BadRequestException('You are not the manager of this assignment.');
+      throw new BadRequestException(
+        'You are not the manager of this assignment.',
+      );
     }
     if (assignment.status !== 'ACTIVE') {
       throw new BadRequestException('Assignment is not active.');
@@ -285,7 +319,11 @@ export class DeliveryAssignmentsService {
       type: 'WAREHOUSE_RETURN_PIN_GENERATED',
       title: 'Warehouse return PIN generated',
       message: `Return PIN for this assignment is: ${rawPin}. Share this with your distributor to close the trip. Expires in 2 hours.`,
-      metadata: { assignmentId, pin: rawPin, expiresAt: pinExpiry.toISOString() },
+      metadata: {
+        assignmentId,
+        pin: rawPin,
+        expiresAt: pinExpiry.toISOString(),
+      },
     });
 
     return {
@@ -301,16 +339,23 @@ export class DeliveryAssignmentsService {
       relations: { assignment: true, order: { user: true } },
     });
     if (!dao || dao.assignment.distributorId !== distributorId) {
-      throw new NotFoundException('Order not found in your active assignments.');
+      throw new NotFoundException(
+        'Order not found in your active assignments.',
+      );
     }
-    if (dao.assignment.status !== 'ACTIVE') throw new BadRequestException('Assignment is not active.');
-    if (dao.order?.status === 'COMPLETED') throw new BadRequestException('Order is already completed.');
+    if (dao.assignment.status !== 'ACTIVE')
+      throw new BadRequestException('Assignment is not active.');
+    if (dao.order?.status === 'COMPLETED')
+      throw new BadRequestException('Order is already completed.');
 
     const rawPin = generatePin();
     const pinHash = await bcrypt.hash(rawPin, 10);
     const pinExpiry = new Date(Date.now() + PIN_TTL_HOURS * 3600 * 1000);
 
-    await this.daoRepo.update(dao.id, { shopPinHash: pinHash, shopPinExpiresAt: pinExpiry });
+    await this.daoRepo.update(dao.id, {
+      shopPinHash: pinHash,
+      shopPinExpiresAt: pinExpiry,
+    });
 
     if (dao.order?.userId) {
       await this.activityService.logForUser({
@@ -330,15 +375,21 @@ export class DeliveryAssignmentsService {
       relations: { assignment: true, order: { user: true } },
     });
     if (!dao || dao.assignment.distributorId !== distributorId) {
-      throw new NotFoundException('Order not found in your active assignments.');
+      throw new NotFoundException(
+        'Order not found in your active assignments.',
+      );
     }
-    if (dao.assignment.status !== 'ACTIVE') throw new BadRequestException('Assignment is not active.');
+    if (dao.assignment.status !== 'ACTIVE')
+      throw new BadRequestException('Assignment is not active.');
 
     const rawPin = generatePin();
     const pinHash = await bcrypt.hash(rawPin, 10);
     const pinExpiry = new Date(Date.now() + 2 * 3600 * 1000);
 
-    await this.daoRepo.update(dao.id, { shopReturnPinHash: pinHash, shopReturnPinExpiresAt: pinExpiry });
+    await this.daoRepo.update(dao.id, {
+      shopReturnPinHash: pinHash,
+      shopReturnPinExpiresAt: pinExpiry,
+    });
 
     if (dao.order?.userId) {
       await this.activityService.logForUser({
@@ -352,25 +403,40 @@ export class DeliveryAssignmentsService {
     return { message: 'Return confirmation PIN sent to shop owner.' };
   }
 
-  async submitShopReturn(distributorId: string, orderId: string, dto: SubmitShopReturnDto) {
+  async submitShopReturn(
+    distributorId: string,
+    orderId: string,
+    dto: SubmitShopReturnDto,
+  ) {
     const dao = await this.daoRepo.findOne({
       where: { orderId },
       relations: { assignment: true, order: { user: true } },
     });
     if (!dao || dao.assignment.distributorId !== distributorId) {
-      throw new NotFoundException('Order not found in your active assignments.');
+      throw new NotFoundException(
+        'Order not found in your active assignments.',
+      );
     }
     if (!dao.shopReturnPinHash || !dao.shopReturnPinExpiresAt) {
-      throw new BadRequestException('No return PIN requested yet. Tap "Request PIN" first.');
+      throw new BadRequestException(
+        'No return PIN requested yet. Tap "Request PIN" first.',
+      );
     }
     if (new Date() > dao.shopReturnPinExpiresAt) {
-      throw new BadRequestException('Return PIN has expired. Request a new one.');
+      throw new BadRequestException(
+        'Return PIN has expired. Request a new one.',
+      );
     }
     const pinMatch = await bcrypt.compare(dto.pin, dao.shopReturnPinHash);
     if (!pinMatch) throw new BadRequestException('Incorrect PIN.');
 
-    const distributor = await this.usersRepo.findOne({ where: { id: distributorId } });
-    const totalValue = dto.items.reduce((s, i) => s + (i.unitPrice ?? 0) * i.quantity, 0);
+    const distributor = await this.usersRepo.findOne({
+      where: { id: distributorId },
+    });
+    const totalValue = dto.items.reduce(
+      (s, i) => s + (i.unitPrice ?? 0) * i.quantity,
+      0,
+    );
 
     await this.returnsRepo.manager.transaction(async (manager) => {
       const oRRepo = manager.getRepository(OrderReturn);
@@ -397,16 +463,27 @@ export class DeliveryAssignmentsService {
           }),
         ),
       );
-      await daoRepo.update(dao.id, { shopReturnPinHash: null, shopReturnPinExpiresAt: null });
+      await daoRepo.update(dao.id, {
+        shopReturnPinHash: null,
+        shopReturnPinExpiresAt: null,
+      });
     });
 
-    const distName = distributor ? `${distributor.firstName} ${distributor.lastName}`.trim() : 'Distributor';
+    const distName = distributor
+      ? `${distributor.firstName} ${distributor.lastName}`.trim()
+      : 'Distributor';
     await this.activityService.logForUser({
       userId: dao.assignment.territoryManagerId,
       type: 'SHOP_RETURN_RECEIVED',
       title: 'Shop return recorded',
       message: `${distName} collected returned products from ${dao.order?.shopNameSnapshot ?? 'shop'} (order ${dao.order?.orderCode ?? orderId}). ${dto.items.length} product type(s)${totalValue > 0 ? `, est. value: LKR ${totalValue.toFixed(2)}` : ''}.`,
-      metadata: { orderId, orderCode: dao.order?.orderCode, distributorId, itemCount: dto.items.length, totalValue },
+      metadata: {
+        orderId,
+        orderCode: dao.order?.orderCode,
+        distributorId,
+        itemCount: dto.items.length,
+        totalValue,
+      },
     });
 
     if (dao.order?.userId) {
@@ -426,46 +503,74 @@ export class DeliveryAssignmentsService {
     if (assignment.distributorId !== distributorId) {
       throw new BadRequestException('This assignment does not belong to you.');
     }
-    if (assignment.status !== 'ACTIVE') throw new BadRequestException('Assignment is not active.');
+    if (assignment.status !== 'ACTIVE')
+      throw new BadRequestException('Assignment is not active.');
 
     const rawPin = generatePin();
     const pinHash = await bcrypt.hash(rawPin, 10);
     const pinExpiry = new Date(Date.now() + 2 * 3600 * 1000);
 
-    await this.assignmentsRepo.update(assignmentId, { tmReturnPinHash: pinHash, tmReturnPinExpiresAt: pinExpiry });
+    await this.assignmentsRepo.update(assignmentId, {
+      tmReturnPinHash: pinHash,
+      tmReturnPinExpiresAt: pinExpiry,
+    });
 
     await this.activityService.logForUser({
       userId: assignment.territoryManagerId,
       type: 'WAREHOUSE_RETURN_PIN_REQUESTED',
       title: 'Distributor ready to return to warehouse',
       message: `Your distributor is ready to return products to the warehouse. Return confirmation PIN: ${rawPin}. Share this with your distributor to close the trip. Expires in 2 hours.`,
-      metadata: { assignmentId, pin: rawPin, expiresAt: pinExpiry.toISOString() },
+      metadata: {
+        assignmentId,
+        pin: rawPin,
+        expiresAt: pinExpiry.toISOString(),
+      },
     });
 
-    return { message: 'PIN sent to Territory Manager. Ask them for the PIN to proceed.' };
+    return {
+      message:
+        'PIN sent to Territory Manager. Ask them for the PIN to proceed.',
+    };
   }
 
   async addDistributorNote(distributorId: string, dto: AddNoteDto) {
-    const distributor = await this.usersRepo.findOne({ where: { id: distributorId } });
+    const distributor = await this.usersRepo.findOne({
+      where: { id: distributorId },
+    });
     let tmUserId: string | null = null;
 
     if (dto.assignmentId) {
-      const assignment = await this.assignmentsRepo.findOne({ where: { id: dto.assignmentId, distributorId } });
+      const assignment = await this.assignmentsRepo.findOne({
+        where: { id: dto.assignmentId, distributorId },
+      });
       if (assignment) tmUserId = assignment.territoryManagerId;
     }
     if (!tmUserId && distributor?.warehouseId) {
-      const tm = await this.usersRepo.findOne({ where: { warehouseId: distributor.warehouseId, role: Role.REGIONAL_MANAGER } });
+      const tm = await this.usersRepo.findOne({
+        where: {
+          warehouseId: distributor.warehouseId,
+          role: Role.REGIONAL_MANAGER,
+        },
+      });
       tmUserId = tm?.id ?? null;
     }
-    if (!tmUserId) throw new BadRequestException('Could not find your territory manager.');
+    if (!tmUserId)
+      throw new BadRequestException('Could not find your territory manager.');
 
-    const name = distributor ? `${distributor.firstName} ${distributor.lastName}`.trim() : 'Distributor';
+    const name = distributor
+      ? `${distributor.firstName} ${distributor.lastName}`.trim()
+      : 'Distributor';
     await this.activityService.logForUser({
       userId: tmUserId,
       type: 'DISTRIBUTOR_NOTE',
       title: `Note from ${name}`,
       message: `[${dto.category.toUpperCase()}] ${dto.message}`,
-      metadata: { distributorId, distributorName: name, assignmentId: dto.assignmentId ?? null, category: dto.category },
+      metadata: {
+        distributorId,
+        distributorName: name,
+        assignmentId: dto.assignmentId ?? null,
+        category: dto.category,
+      },
     });
 
     return { message: 'Note sent to Territory Manager.' };
@@ -487,37 +592,52 @@ export class DeliveryAssignmentsService {
     }
 
     const assignments = await query.getMany();
-    return { message: 'Assignments fetched.', assignments: assignments.map(this.serializeAssignment) };
+    return {
+      message: 'Assignments fetched.',
+      assignments: assignments.map(this.serializeAssignment),
+    };
   }
 
   async listReturns(tmUserId: string) {
     const tm = await this.usersRepo.findOne({ where: { id: tmUserId } });
-    if (!tm?.warehouseId) throw new BadRequestException('Not assigned to a warehouse.');
+    if (!tm?.warehouseId)
+      throw new BadRequestException('Not assigned to a warehouse.');
 
     const returns = await this.returnsRepo
       .createQueryBuilder('r')
       .innerJoinAndSelect('r.distributor', 'distributor')
       .innerJoinAndSelect('r.items', 'items')
       .leftJoin('r.assignment', 'assignment')
-      .where('distributor.warehouse_id = :warehouseId', { warehouseId: tm.warehouseId })
+      .where('distributor.warehouse_id = :warehouseId', {
+        warehouseId: tm.warehouseId,
+      })
       .orderBy('r.created_at', 'DESC')
       .getMany();
 
-    return { message: 'Returns fetched.', returns: returns.map(this.serializeReturn) };
+    return {
+      message: 'Returns fetched.',
+      returns: returns.map(this.serializeReturn),
+    };
   }
 
   async listIncidents(tmUserId: string) {
     const tm = await this.usersRepo.findOne({ where: { id: tmUserId } });
-    if (!tm?.warehouseId) throw new BadRequestException('Not assigned to a warehouse.');
+    if (!tm?.warehouseId)
+      throw new BadRequestException('Not assigned to a warehouse.');
 
     const incidents = await this.incidentsRepo
       .createQueryBuilder('i')
       .innerJoinAndSelect('i.reporter', 'reporter')
-      .where('reporter.warehouse_id = :warehouseId', { warehouseId: tm.warehouseId })
+      .where('reporter.warehouse_id = :warehouseId', {
+        warehouseId: tm.warehouseId,
+      })
       .orderBy('i.created_at', 'DESC')
       .getMany();
 
-    return { message: 'Incidents fetched.', incidents: incidents.map(this.serializeIncident) };
+    return {
+      message: 'Incidents fetched.',
+      incidents: incidents.map(this.serializeIncident),
+    };
   }
 
   async getMyAssignment(distributorId: string) {
@@ -525,14 +645,23 @@ export class DeliveryAssignmentsService {
 
     const assignment = await this.assignmentsRepo.findOne({
       where: { distributorId, deliveryDate: today, status: 'ACTIVE' },
-      relations: ['assignmentOrders', 'assignmentOrders.order', 'assignmentOrders.order.user', 'assignmentOrders.order.items', 'vehicle'],
+      relations: [
+        'assignmentOrders',
+        'assignmentOrders.order',
+        'assignmentOrders.order.user',
+        'assignmentOrders.order.items',
+        'vehicle',
+      ],
     });
 
     if (!assignment) {
       return { message: 'No active assignment for today.', assignment: null };
     }
 
-    return { message: 'Assignment fetched.', assignment: this.serializeAssignment(assignment) };
+    return {
+      message: 'Assignment fetched.',
+      assignment: this.serializeAssignment(assignment),
+    };
   }
 
   async completeOrder(distributorId: string, orderId: string, pin: string) {
@@ -542,7 +671,9 @@ export class DeliveryAssignmentsService {
     });
 
     if (!dao || dao.assignment.distributorId !== distributorId) {
-      throw new NotFoundException('Order not found in your active assignments.');
+      throw new NotFoundException(
+        'Order not found in your active assignments.',
+      );
     }
     if (dao.assignment.status !== 'ACTIVE') {
       throw new BadRequestException('Assignment is not active.');
@@ -551,7 +682,9 @@ export class DeliveryAssignmentsService {
       throw new BadRequestException('No PIN has been set for this order.');
     }
     if (new Date() > dao.shopPinExpiresAt) {
-      throw new BadRequestException('The shop PIN has expired. Contact your territory manager.');
+      throw new BadRequestException(
+        'The shop PIN has expired. Contact your territory manager.',
+      );
     }
 
     const pinMatch = await bcrypt.compare(pin, dao.shopPinHash);
@@ -566,7 +699,10 @@ export class DeliveryAssignmentsService {
       customerNote,
     });
 
-    await this.daoRepo.update(dao.id, { shopPinHash: null, shopPinExpiresAt: null });
+    await this.daoRepo.update(dao.id, {
+      shopPinHash: null,
+      shopPinExpiresAt: null,
+    });
 
     if (dao.order) {
       await Promise.all([
@@ -599,7 +735,11 @@ export class DeliveryAssignmentsService {
     return { message: 'Order marked as completed.' };
   }
 
-  async submitReturn(distributorId: string, assignmentId: string, dto: SubmitReturnDto) {
+  async submitReturn(
+    distributorId: string,
+    assignmentId: string,
+    dto: SubmitReturnDto,
+  ) {
     const assignment = await this.requireAssignment(assignmentId);
 
     if (assignment.distributorId !== distributorId) {
@@ -614,17 +754,26 @@ export class DeliveryAssignmentsService {
       );
     }
     if (new Date() > assignment.tmReturnPinExpiresAt) {
-      throw new BadRequestException('Return PIN has expired. Ask your territory manager to regenerate it.');
+      throw new BadRequestException(
+        'Return PIN has expired. Ask your territory manager to regenerate it.',
+      );
     }
 
-    const pinMatch = await bcrypt.compare(dto.tmPin, assignment.tmReturnPinHash);
+    const pinMatch = await bcrypt.compare(
+      dto.tmPin,
+      assignment.tmReturnPinHash,
+    );
     if (!pinMatch) {
       throw new BadRequestException('Incorrect territory manager PIN.');
     }
 
-    const distributor = await this.usersRepo.findOne({ where: { id: distributorId } });
+    const distributor = await this.usersRepo.findOne({
+      where: { id: distributorId },
+    });
     if (!distributor?.warehouseId) {
-      throw new BadRequestException('Distributor is not assigned to a warehouse.');
+      throw new BadRequestException(
+        'Distributor is not assigned to a warehouse.',
+      );
     }
 
     await this.returnsRepo.manager.transaction(async (manager) => {
@@ -687,7 +836,10 @@ export class DeliveryAssignmentsService {
     return assignment;
   }
 
-  private async buildStockReservationCheck(warehouseId: string, orders: Order[]) {
+  private async buildStockReservationCheck(
+    warehouseId: string,
+    orders: Order[],
+  ) {
     const reservationsByProduct = new Map<string, StockReservation>();
     const shortages: string[] = [];
     let totalCases = 0;
@@ -768,7 +920,10 @@ export class DeliveryAssignmentsService {
 
     for (const reservation of reservations) {
       const inventoryItem = inventoryByProductId.get(reservation.productId);
-      if (!inventoryItem || inventoryItem.quantityOnHand < reservation.quantity) {
+      if (
+        !inventoryItem ||
+        inventoryItem.quantityOnHand < reservation.quantity
+      ) {
         throw new BadRequestException(
           `${reservation.productName} no longer has enough stock to start delivery. Please refresh and process the order again.`,
         );
@@ -867,7 +1022,8 @@ export class DeliveryAssignmentsService {
     vehicle: Vehicle | null,
     deliveryDate: string,
   ) {
-    const distributorName = `${distributor.firstName} ${distributor.lastName}`.trim();
+    const distributorName =
+      `${distributor.firstName} ${distributor.lastName}`.trim();
     const vehiclePart = vehicle ? ` using ${vehicle.label}` : '';
     return `Your order ${orderCode} has started delivery with ${distributorName}${vehiclePart}. Delivery is scheduled for ${this.formatDeliveryDate(deliveryDate)}.`;
   }
@@ -906,6 +1062,8 @@ export class DeliveryAssignmentsService {
           shopName: dao.order?.shopNameSnapshot ?? null,
           shopPhone: dao.order?.user?.phoneNumber ?? null,
           shopAddress: dao.order?.user?.address ?? null,
+          shopLatitude: dao.order?.user?.latitude ?? null,
+          shopLongitude: dao.order?.user?.longitude ?? null,
           totalAmount: dao.order?.totalAmount ?? null,
           currencyCode: dao.order?.currencyCode ?? 'LKR',
           status: dao.order?.status ?? null,
