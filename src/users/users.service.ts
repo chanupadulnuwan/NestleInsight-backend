@@ -133,7 +133,7 @@ export class UsersService {
         approvalStatus: ApprovalStatus.PENDING,
       })
       .andWhere('user.accountStatus IN (:...accountStatuses)', {
-        accountStatuses: [AccountStatus.PENDING, AccountStatus.ACTIVE],
+        accountStatuses: [AccountStatus.PENDING, AccountStatus.ACTIVE, AccountStatus.OTP_PENDING],
       })
       .orderBy('user.createdAt', 'DESC')
       .getMany();
@@ -178,7 +178,7 @@ export class UsersService {
     }
 
     if (
-      ![AccountStatus.PENDING, AccountStatus.ACTIVE].includes(
+      ![AccountStatus.PENDING, AccountStatus.ACTIVE, AccountStatus.OTP_PENDING].includes(
         user.accountStatus,
       )
     ) {
@@ -191,6 +191,7 @@ export class UsersService {
         Role.TERRITORY_DISTRIBUTOR,
         Role.DEMAND_PLANNER,
         Role.REGIONAL_MANAGER,
+        Role.SHOP_OWNER,
       ].includes(user.role)
     ) {
       throw new BadRequestException(
@@ -198,12 +199,8 @@ export class UsersService {
       );
     }
 
-    const needsOtpAfterApproval = user.accountStatus === AccountStatus.PENDING;
-
     user.approvalStatus = ApprovalStatus.APPROVED;
-    user.accountStatus = needsOtpAfterApproval
-      ? AccountStatus.OTP_PENDING
-      : AccountStatus.ACTIVE;
+    user.accountStatus = AccountStatus.ACTIVE;
     user.approvedBy = adminActor.username ?? 'admin';
     user.approvedAt = new Date();
     user.rejectionReason = null;
@@ -218,9 +215,7 @@ export class UsersService {
       userId: savedUser.id,
       type: 'ACCOUNT_APPROVED',
       title: 'Account approved',
-      message: needsOtpAfterApproval
-        ? 'Your account moved from pending approval to OTP verification.'
-        : 'Your account has been approved and is now fully active.',
+      message: 'Your account has been approved and is now fully active.',
       metadata: {
         accountStatus: savedUser.accountStatus,
         approvalStatus: savedUser.approvalStatus,
@@ -232,9 +227,7 @@ export class UsersService {
     });
 
     return {
-      message: needsOtpAfterApproval
-        ? 'user approved successfully. OTP verification is the next step.'
-        : 'user approved successfully. Full web portal access is now active.',
+      message: 'user approved successfully. Account is now active.',
       user: this.sanitizeUser(savedUser),
     };
   }
