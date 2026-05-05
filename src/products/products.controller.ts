@@ -38,6 +38,7 @@ export class ProductsController {
   }
 
   @Get()
+  @Roles(Role.ADMIN, Role.DEMAND_PLANNER)
   listProducts() {
     return this.productsService.listProducts();
   }

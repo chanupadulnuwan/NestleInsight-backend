@@ -4,9 +4,11 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, Like } from 'typeorm';
+import { In, Like, MoreThan, Repository } from 'typeorm';
 
 import { ActivityService } from '../activity/activity.service';
+import { ActivityLog } from '../activity/entities/activity.entity';
+import { OrderReturn } from '../delivery-assignments/entities/order-return.entity';
 import { StoreVisit, StoreVisitStatus } from './entities/store-visit.entity';
 import { Order } from '../orders/entities/order.entity';
 import {
@@ -25,6 +27,10 @@ export class StoreVisitsService {
     private readonly storeVisitsRepo: Repository<StoreVisit>,
     @InjectRepository(Order)
     private readonly ordersRepo: Repository<Order>,
+    @InjectRepository(ActivityLog)
+    private readonly activityLogsRepo: Repository<ActivityLog>,
+    @InjectRepository(OrderReturn)
+    private readonly orderReturnsRepo: Repository<OrderReturn>,
     @InjectRepository(SalesRoute)
     private readonly salesRoutesRepo: Repository<SalesRoute>,
     @InjectRepository(RouteBeatPlanItem)
@@ -329,12 +335,11 @@ export class StoreVisitsService {
    * orders placed since the last completed visit by this rep.
    * Used by the mobile app to calculate estimated sell-through per product.
    */
-  async getOutletContext(outletId: string, salesRepId: string) {
-    // Last completed visit by this rep for this outlet
+  async getOutletContext(outletId: string) {
+    // Demand context must follow the outlet, not the individual rep.
     const lastVisit = await this.storeVisitsRepo.findOne({
       where: {
         shopId: outletId,
-        salesRepId,
         status: StoreVisitStatus.COMPLETED,
       },
       order: { visitEndedAt: 'DESC' },
@@ -351,19 +356,15 @@ export class StoreVisitsService {
       (o) => o.placedAt && new Date(o.placedAt) > since,
     );
 
-    // Aggregate per-product quantities since last visit
-    const productQuantities: Record<string, number> = {};
-    for (const order of ordersSinceLastVisit) {
-      for (const item of order.items || []) {
-        if (!item.productId) continue;
-        const key = item.productId;
-        productQuantities[key] =
-          (productQuantities[key] || 0) + (item.quantity || 0);
-      }
-    }
+    const productQuantities = await this.buildExpectedStockUnitsByProduct(
+      lastVisit,
+      allOrders,
+      since,
+    );
 
     return {
       lastVisitDate: lastVisit?.visitEndedAt ?? null,
+      lastVisitSalesRepId: lastVisit?.salesRepId ?? null,
       orderCountSinceLastVisit: ordersSinceLastVisit.length,
       recentOrders: allOrders.slice(0, 5).map((o) => ({
         id: o.id,
@@ -382,16 +383,201 @@ export class StoreVisitsService {
     };
   }
 
+  private async buildExpectedStockUnitsByProduct(
+    lastVisit: StoreVisit | null,
+    movementCandidateOrders: Order[],
+    since: Date,
+  ) {
+    const expectedUnits = this.readVisitStockUnits(lastVisit);
+    const deliveredUnits = await this.readDeliveredUnitsByProduct(
+      movementCandidateOrders,
+      since,
+    );
+    const returnedUnits = await this.readReturnedUnitsByProduct(
+      movementCandidateOrders,
+      since,
+    );
+
+    for (const [productId, quantity] of deliveredUnits.entries()) {
+      expectedUnits.set(productId, (expectedUnits.get(productId) ?? 0) + quantity);
+    }
+
+    for (const [productId, quantity] of returnedUnits.entries()) {
+      expectedUnits.set(
+        productId,
+        Math.max(0, (expectedUnits.get(productId) ?? 0) - quantity),
+      );
+    }
+
+    return Object.fromEntries(expectedUnits.entries());
+  }
+
+  private readVisitStockUnits(visit: StoreVisit | null) {
+    const stockUnits = new Map<string, number>();
+    const stockItems = Array.isArray(visit?.shelfStockJson)
+      ? visit.shelfStockJson
+      : [];
+
+    for (const item of stockItems) {
+      const record = item as unknown as Record<string, unknown>;
+      const productId = record.productId?.toString() ?? '';
+      if (!productId) {
+        continue;
+      }
+
+      const quantityUnits =
+        this.readNumber(record.shelfCount) +
+        this.readNumber(record.backroomCount) +
+        this.readNumber(record.quantityUnits);
+
+      stockUnits.set(productId, (stockUnits.get(productId) ?? 0) + quantityUnits);
+    }
+
+    return stockUnits;
+  }
+
+  private async readDeliveredUnitsByProduct(
+    movementCandidateOrders: Order[],
+    since: Date,
+  ) {
+    const deliveredUnits = new Map<string, number>();
+    const orderIds = new Set(movementCandidateOrders.map((order) => order.id));
+
+    if (orderIds.size === 0) {
+      return deliveredUnits;
+    }
+
+    const activityLogs = await this.activityLogsRepo.find({
+      where: {
+        type: In([
+          'SALES_REP_ORDER_DELIVERED',
+          'SALES_REP_ORDER_PARTIAL_DELIVERY',
+        ]),
+        createdAt: MoreThan(since),
+      },
+      order: { createdAt: 'ASC' },
+    });
+    const deliveryActivityByOrderId = new Map<string, ActivityLog>();
+
+    for (const activity of activityLogs) {
+      const orderId = activity.metadata?.orderId?.toString?.() ?? '';
+      const deliveredItems = activity.metadata?.deliveredItems;
+      if (!orderIds.has(orderId) || !Array.isArray(deliveredItems)) {
+        continue;
+      }
+      deliveryActivityByOrderId.set(orderId, activity);
+    }
+
+    for (const order of movementCandidateOrders) {
+      const activity = deliveryActivityByOrderId.get(order.id);
+      if (activity) {
+        const deliveredItems = activity.metadata?.deliveredItems as unknown[];
+        for (const deliveredItem of deliveredItems) {
+          const record = deliveredItem as Record<string, unknown>;
+          const productId = record.productId?.toString() ?? '';
+          if (!productId) {
+            continue;
+          }
+          const unitsPerCase = this.unitsPerCaseForOrderProduct(order, productId);
+          this.incrementQuantity(
+            deliveredUnits,
+            productId,
+            this.readNumber(record.quantityCases) * unitsPerCase,
+          );
+        }
+        continue;
+      }
+
+      const fallbackDeliveredAt = order.updatedAt ?? order.placedAt;
+      if (
+        order.status !== 'COMPLETED' ||
+        !fallbackDeliveredAt ||
+        fallbackDeliveredAt.getTime() <= since.getTime()
+      ) {
+        continue;
+      }
+
+      for (const item of order.items ?? []) {
+        if (!item.productId) {
+          continue;
+        }
+        this.incrementQuantity(
+          deliveredUnits,
+          item.productId,
+          this.readNumber(item.quantity) *
+            this.unitsPerCaseForOrderProduct(order, item.productId),
+        );
+      }
+    }
+
+    return deliveredUnits;
+  }
+
+  private async readReturnedUnitsByProduct(
+    movementCandidateOrders: Order[],
+    since: Date,
+  ) {
+    const returnedUnits = new Map<string, number>();
+    const orderIds = new Set(movementCandidateOrders.map((order) => order.id));
+
+    if (orderIds.size === 0) {
+      return returnedUnits;
+    }
+
+    const returns = await this.orderReturnsRepo.find({
+      where: { createdAt: MoreThan(since) },
+      relations: { items: { product: true } },
+    });
+
+    for (const orderReturn of returns) {
+      if (!orderReturn.orderId || !orderIds.has(orderReturn.orderId)) {
+        continue;
+      }
+
+      for (const item of orderReturn.items ?? []) {
+        if (!item.productId) {
+          continue;
+        }
+        const unitsPerCase = item.product?.productsPerCase ?? 1;
+        this.incrementQuantity(
+          returnedUnits,
+          item.productId,
+          this.readNumber(item.quantity) * unitsPerCase,
+        );
+      }
+    }
+
+    return returnedUnits;
+  }
+
+  private unitsPerCaseForOrderProduct(order: Order, productId: string) {
+    const item = order.items?.find((orderItem) => orderItem.productId === productId);
+    return item?.product?.productsPerCase ?? 1;
+  }
+
+  private incrementQuantity(
+    quantities: Map<string, number>,
+    productId: string,
+    quantity: number,
+  ) {
+    quantities.set(productId, (quantities.get(productId) ?? 0) + quantity);
+  }
+
+  private readNumber(value: unknown) {
+    const numericValue = Number(value ?? 0);
+    return Number.isFinite(numericValue) ? numericValue : 0;
+  }
+
   private async findOrdersForOutlet(outletId: string): Promise<Order[]> {
     const [directOrders, assistedOrders] = await Promise.all([
       this.ordersRepo.find({
         where: { userId: outletId },
-        relations: ['items'],
+        relations: ['items', 'items.product'],
         order: { placedAt: 'DESC' },
       }),
       this.ordersRepo.find({
         where: { customerNote: Like(`%Shop: ${outletId}%`) },
-        relations: ['items'],
+        relations: ['items', 'items.product'],
         order: { placedAt: 'DESC' },
       }),
     ]);

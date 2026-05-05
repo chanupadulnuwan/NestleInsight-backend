@@ -7,9 +7,11 @@ import { FieldMonitoringService } from './field-monitoring.service';
 
 @Controller('monitoring')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(Role.ADMIN)
+@Roles(Role.ADMIN, Role.DEMAND_PLANNER)
 export class FieldMonitoringController {
-  constructor(private readonly fieldMonitoringService: FieldMonitoringService) {}
+  constructor(
+    private readonly fieldMonitoringService: FieldMonitoringService,
+  ) {}
 
   /**
    * GET /monitoring/field-ops/overview?date=YYYY-MM-DD&territoryId=

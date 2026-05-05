@@ -23,6 +23,7 @@ const MANAGEABLE_ROLES = [
   Role.TERRITORY_DISTRIBUTOR,
   Role.REGIONAL_MANAGER,
   Role.SALES_REP,
+  Role.DEMAND_PLANNER,
 ];
 
 @Injectable()
@@ -31,7 +32,7 @@ export class UsersService {
     @InjectRepository(User)
     private readonly usersRepository: Repository<User>,
     private readonly activityService: ActivityService,
-  ) { }
+  ) {}
 
   async create(userData: Partial<User>): Promise<User> {
     const user = this.usersRepository.create(userData);
@@ -133,7 +134,11 @@ export class UsersService {
         approvalStatus: ApprovalStatus.PENDING,
       })
       .andWhere('user.accountStatus IN (:...accountStatuses)', {
-        accountStatuses: [AccountStatus.PENDING, AccountStatus.ACTIVE, AccountStatus.OTP_PENDING],
+        accountStatuses: [
+          AccountStatus.PENDING,
+          AccountStatus.ACTIVE,
+          AccountStatus.OTP_PENDING,
+        ],
       })
       .orderBy('user.createdAt', 'DESC')
       .getMany();
@@ -178,9 +183,11 @@ export class UsersService {
     }
 
     if (
-      ![AccountStatus.PENDING, AccountStatus.ACTIVE, AccountStatus.OTP_PENDING].includes(
-        user.accountStatus,
-      )
+      ![
+        AccountStatus.PENDING,
+        AccountStatus.ACTIVE,
+        AccountStatus.OTP_PENDING,
+      ].includes(user.accountStatus)
     ) {
       throw new BadRequestException('only pending users can be approved');
     }
@@ -475,7 +482,4 @@ export class UsersService {
 
     return `${prefix}-${timePart}${randomPart}`;
   }
-
-
-
 }

@@ -1,15 +1,7 @@
-import {
-  Body,
-  Controller,
-  Get,
-  Post,
-  Query,
-  UseGuards,
-} from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, UseGuards } from '@nestjs/common';
 
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
-import { PortalApprovalGuard } from '../auth/guards/portal-approval.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Role } from '../common/enums/role.enum';
 import { CreateTerritoryDto } from './dto/create-territory.dto';
@@ -21,7 +13,7 @@ export class TerritoriesController {
 
   @Get()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN, Role.REGIONAL_MANAGER, Role.SALES_REP)
+  @Roles(Role.ADMIN, Role.DEMAND_PLANNER, Role.REGIONAL_MANAGER, Role.SALES_REP)
   listTerritories() {
     return this.territoriesService.listTerritories();
   }

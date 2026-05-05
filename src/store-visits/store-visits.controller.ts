@@ -49,14 +49,18 @@ export class StoreVisitsController {
     @Req() req: any,
     @Body() dto: CompleteVisitDto,
   ) {
-    return this.storeVisitsService.completeVisit(visitId, req.user?.userId, dto);
+    return this.storeVisitsService.completeVisit(
+      visitId,
+      req.user?.userId,
+      dto,
+    );
   }
 
   @Get('outlet-context/:outletId')
   @UseGuards(RolesGuard)
   @Roles(Role.SALES_REP)
-  getOutletContext(@Param('outletId') outletId: string, @Req() req: any) {
-    return this.storeVisitsService.getOutletContext(outletId, req.user?.userId);
+  getOutletContext(@Param('outletId') outletId: string) {
+    return this.storeVisitsService.getOutletContext(outletId);
   }
 
   @Post(':id/photos')
@@ -68,6 +72,10 @@ export class StoreVisitsController {
     @Req() req: any,
     @UploadedFile() file: any,
   ) {
-    return this.storeVisitsService.addPhotoToVisit(visitId, req.user?.userId, file.filename);
+    return this.storeVisitsService.addPhotoToVisit(
+      visitId,
+      req.user?.userId,
+      file.filename,
+    );
   }
 }

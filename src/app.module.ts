@@ -7,6 +7,8 @@ import { AuthModule } from './auth/auth.module';
 import { CategoriesModule } from './categories/categories.module';
 import { DailyReportsModule } from './daily-reports/daily-reports.module';
 import { DeliveryAssignmentsModule } from './delivery-assignments/delivery-assignments.module';
+import { ExportsModule } from './exports/exports.module';
+import { ForecastEngineModule } from './forecast-engine/forecast-engine.module';
 import { OrdersModule } from './orders/orders.module';
 import { OutletsModule } from './outlets/outlets.module';
 import { ProductsModule } from './products/products.module';
@@ -47,6 +49,8 @@ import { FieldMonitoringModule } from './field-monitoring/field-monitoring.modul
     CategoriesModule,
     DailyReportsModule,
     DeliveryAssignmentsModule,
+    ExportsModule,
+    ForecastEngineModule,
     OrdersModule,
     OutletsModule,
     ProductsModule,

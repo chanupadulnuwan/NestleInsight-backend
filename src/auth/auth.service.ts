@@ -41,7 +41,7 @@ export class AuthService {
     private readonly territoriesRepository: Repository<Territory>,
     @InjectRepository(Warehouse)
     private readonly warehousesRepository: Repository<Warehouse>,
-  ) { }
+  ) {}
 
   async login(loginDto: LoginDto) {
     const { identifier, password, platformAccess } = loginDto;
@@ -145,9 +145,11 @@ export class AuthService {
     const assignment =
       role === Role.SHOP_OWNER
         ? await this.resolveNearestAssignment(latitude, longitude)
-        : [Role.REGIONAL_MANAGER, Role.TERRITORY_DISTRIBUTOR, Role.SALES_REP].includes(
-          role,
-        )
+        : [
+              Role.REGIONAL_MANAGER,
+              Role.TERRITORY_DISTRIBUTOR,
+              Role.SALES_REP,
+            ].includes(role)
           ? await this.resolveWarehouseAssignment(warehouseName)
           : null;
 
@@ -184,8 +186,7 @@ export class AuthService {
 
     const passwordHash = await bcrypt.hash(password, 10);
 
-    const needsPreOtpAdminApproval = role === Role.DEMAND_PLANNER;
-    const needsPostOtpAdminApproval = role === Role.REGIONAL_MANAGER || role === Role.SALES_REP;
+    const needsPostOtpAdminApproval = this.requiresAdminApprovalAfterOtp(role);
     const needsTerritoryManagerApproval = this.requiresTerritoryManagerApproval(
       role,
       assignment?.warehouse.id ?? null,
@@ -213,13 +214,10 @@ export class AuthService {
       longitude: longitude ?? null,
       role,
       platformAccess,
-      accountStatus: needsPreOtpAdminApproval
-        ? AccountStatus.PENDING
-        : AccountStatus.OTP_PENDING,
-      approvalStatus:
-        needsPreOtpAdminApproval || needsPostOtpApproval
-          ? ApprovalStatus.PENDING
-          : ApprovalStatus.APPROVED,
+      accountStatus: AccountStatus.OTP_PENDING,
+      approvalStatus: needsPostOtpApproval
+        ? ApprovalStatus.PENDING
+        : ApprovalStatus.APPROVED,
       publicUserCode: null,
       approvedBy: null,
       approvedAt: null,
@@ -235,13 +233,11 @@ export class AuthService {
       userId: user.id,
       type: 'ACCOUNT_CREATED',
       title: 'Account created',
-      message: needsPreOtpAdminApproval
-        ? 'Your account was created and is waiting for admin approval.'
-        : needsTerritoryManagerApproval
-          ? 'Your account was created and is waiting for OTP verification before territory manager approval.'
-          : needsPostOtpAdminApproval
-            ? 'Your account was created and is waiting for OTP verification before admin approval.'
-            : 'Your account was created and is waiting for OTP verification.',
+      message: needsTerritoryManagerApproval
+        ? 'Your account was created and is waiting for OTP verification before territory manager approval.'
+        : needsPostOtpAdminApproval
+          ? 'Your account was created and is waiting for OTP verification before admin approval.'
+          : 'Your account was created and is waiting for OTP verification.',
       metadata: {
         accountStatus: user.accountStatus,
         approvalStatus: user.approvalStatus,
@@ -250,14 +246,6 @@ export class AuthService {
 
     if (needsTerritoryManagerApproval) {
       await this.notifyWarehouseManagerOfPendingApproval(user);
-    }
-
-    if (needsPreOtpAdminApproval) {
-      return {
-        message:
-          'Registration submitted successfully. Waiting for admin approval.',
-        user: this.sanitizeUser(user),
-      };
     }
 
     const otpCode = await this.issueOtp(user);
@@ -302,8 +290,7 @@ export class AuthService {
     }
 
     const needsPostOtpApproval =
-      user.role === Role.REGIONAL_MANAGER ||
-      user.role === Role.SALES_REP ||
+      this.requiresAdminApprovalAfterOtp(user.role) ||
       this.requiresTerritoryManagerApproval(user.role, user.warehouseId);
 
     user.accountStatus = AccountStatus.ACTIVE;
@@ -336,7 +323,10 @@ export class AuthService {
 
     if (
       needsPostOtpApproval &&
-      this.requiresTerritoryManagerApproval(savedUser.role, savedUser.warehouseId)
+      this.requiresTerritoryManagerApproval(
+        savedUser.role,
+        savedUser.warehouseId,
+      )
     ) {
       await this.notifyWarehouseManagerOfPendingApproval(savedUser);
     }
@@ -349,7 +339,8 @@ export class AuthService {
       message: needsPostOtpApproval
         ? `OTP verified successfully. ${this.getPendingApprovalFollowUp(savedUser)}`
         : 'OTP verified successfully. You can log in now.',
-      needsAdminApproval: savedUser.role === Role.SALES_REP && needsPostOtpApproval,
+      needsAdminApproval:
+        savedUser.role === Role.SALES_REP && needsPostOtpApproval,
       user: this.sanitizeUser(savedUser),
     };
   }
@@ -368,7 +359,9 @@ export class AuthService {
       throw new BadRequestException('email is required');
     }
 
-    const user = await this.usersService.findByEmail(email.trim().toLowerCase());
+    const user = await this.usersService.findByEmail(
+      email.trim().toLowerCase(),
+    );
 
     if (!user) {
       throw new NotFoundException('account not found');
@@ -777,8 +770,16 @@ export class AuthService {
     );
   }
 
+  private requiresAdminApprovalAfterOtp(role: Role) {
+    return [
+      Role.REGIONAL_MANAGER,
+      Role.SALES_REP,
+      Role.DEMAND_PLANNER,
+    ].includes(role);
+  }
+
   private getPendingApprovalMessage(user: User) {
-    if (user.role === Role.REGIONAL_MANAGER || user.role === Role.SALES_REP) {
+    if (this.requiresAdminApprovalAfterOtp(user.role)) {
       return 'account is waiting for admin approval';
     }
 
@@ -790,7 +791,7 @@ export class AuthService {
   }
 
   private getPostOtpApprovalMessage(user: User) {
-    if (user.role === Role.REGIONAL_MANAGER || user.role === Role.SALES_REP) {
+    if (this.requiresAdminApprovalAfterOtp(user.role)) {
       return 'Your account moved from OTP pending to active and is waiting for admin approval.';
     }
 
@@ -802,7 +803,7 @@ export class AuthService {
   }
 
   private getPendingApprovalFollowUp(user: User) {
-    if (user.role === Role.REGIONAL_MANAGER || user.role === Role.SALES_REP) {
+    if (this.requiresAdminApprovalAfterOtp(user.role)) {
       return 'Your account is now waiting for admin approval.';
     }
 
@@ -824,7 +825,8 @@ export class AuthService {
     }
 
     const fullName = `${user.firstName} ${user.lastName}`.trim();
-    const warehouseName = user.warehouseName ?? user.warehouse?.name ?? 'your warehouse';
+    const warehouseName =
+      user.warehouseName ?? user.warehouse?.name ?? 'your warehouse';
 
     await Promise.all(
       tms.map((tm) =>
@@ -847,7 +849,8 @@ export class AuthService {
   private async notifyAdminOfPendingSalesRep(user: User) {
     const admins = await this.usersService.findByRole(Role.ADMIN);
     const fullName = `${user.firstName} ${user.lastName}`.trim();
-    const warehouseName = user.warehouseName ?? user.warehouse?.name ?? 'unknown warehouse';
+    const warehouseName =
+      user.warehouseName ?? user.warehouse?.name ?? 'unknown warehouse';
 
     await Promise.all(
       admins.map((admin) =>
@@ -962,7 +965,11 @@ export class AuthService {
           warehouse.latitude !== null && warehouse.longitude !== null,
       ) as Array<Warehouse & { latitude: number; longitude: number }>,
     );
-    const nearestTerritory = findNearestLocation(latitude, longitude, territories);
+    const nearestTerritory = findNearestLocation(
+      latitude,
+      longitude,
+      territories,
+    );
 
     const territory =
       nearestWarehouse?.item.territory ?? nearestTerritory?.item ?? null;

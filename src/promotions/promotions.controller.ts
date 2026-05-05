@@ -37,12 +37,13 @@ export class PromotionsController {
   }
 
   @Post()
+  @Roles(Role.ADMIN, Role.DEMAND_PLANNER)
   create(@Request() req: any, @Body() createPromotionDto: CreatePromotionDto) {
     return this.promotionsService.create(createPromotionDto, req.user?.userId);
   }
 
   @Get()
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.DEMAND_PLANNER)
   findAll() {
     return this.promotionsService.findAll();
   }
@@ -96,19 +97,22 @@ export class PromotionsController {
   }
 
   @Get(':id')
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.DEMAND_PLANNER)
   findOne(@Param('id') id: string) {
     return this.promotionsService.findOne(id);
   }
 
   @Patch(':id')
-  @Roles(Role.ADMIN)
-  update(@Param('id') id: string, @Body() updatePromotionDto: UpdatePromotionDto) {
+  @Roles(Role.ADMIN, Role.DEMAND_PLANNER)
+  update(
+    @Param('id') id: string,
+    @Body() updatePromotionDto: UpdatePromotionDto,
+  ) {
     return this.promotionsService.update(id, updatePromotionDto);
   }
 
   @Delete(':id')
-  @Roles(Role.ADMIN)
+  @Roles(Role.ADMIN, Role.DEMAND_PLANNER)
   remove(@Param('id') id: string) {
     return this.promotionsService.remove(id);
   }
