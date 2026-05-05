@@ -17,7 +17,9 @@ export class DeliveryAssignmentOrder {
   @Column({ name: 'assignment_id', type: 'uuid' })
   assignmentId: string;
 
-  @ManyToOne(() => DeliveryAssignment, (a) => a.assignmentOrders, { onDelete: 'CASCADE' })
+  @ManyToOne(() => DeliveryAssignment, (a) => a.assignmentOrders, {
+    onDelete: 'CASCADE',
+  })
   @JoinColumn({ name: 'assignment_id' })
   assignment: DeliveryAssignment;
 
@@ -31,15 +33,29 @@ export class DeliveryAssignmentOrder {
   @Column({ name: 'sort_order', type: 'int', default: 0 })
   sortOrder: number;
 
-  @Column({ name: 'shop_pin_hash', type: 'varchar', length: 255, nullable: true })
+  @Column({
+    name: 'shop_pin_hash',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
   shopPinHash: string | null;
 
   @Column({ name: 'shop_pin_expires_at', type: 'timestamp', nullable: true })
   shopPinExpiresAt: Date | null;
 
-  @Column({ name: 'shop_return_pin_hash', type: 'varchar', length: 255, nullable: true })
+  @Column({
+    name: 'shop_return_pin_hash',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
   shopReturnPinHash: string | null;
 
-  @Column({ name: 'shop_return_pin_expires_at', type: 'timestamp', nullable: true })
+  @Column({
+    name: 'shop_return_pin_expires_at',
+    type: 'timestamp',
+    nullable: true,
+  })
   shopReturnPinExpiresAt: Date | null;
 }

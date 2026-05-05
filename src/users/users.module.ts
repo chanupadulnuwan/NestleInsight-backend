@@ -14,7 +14,13 @@ import { UsersService } from './users.service';
 @Module({
   imports: [TypeOrmModule.forFeature([User]), ActivityModule],
   controllers: [UsersController, TmUsersController],
-  providers: [UsersService, TmUsersService, JwtAuthGuard, RolesGuard, PortalApprovalGuard],
+  providers: [
+    UsersService,
+    TmUsersService,
+    JwtAuthGuard,
+    RolesGuard,
+    PortalApprovalGuard,
+  ],
   exports: [TypeOrmModule, UsersService],
 })
 export class UsersModule {}

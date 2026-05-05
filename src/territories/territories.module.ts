@@ -23,7 +23,12 @@ import { TerritoriesService } from './territories.service';
     ]),
   ],
   controllers: [TerritoriesController],
-  providers: [TerritoriesService, JwtAuthGuard, RolesGuard, PortalApprovalGuard],
+  providers: [
+    TerritoriesService,
+    JwtAuthGuard,
+    RolesGuard,
+    PortalApprovalGuard,
+  ],
   exports: [TerritoriesService, TypeOrmModule],
 })
 export class TerritoriesModule {}

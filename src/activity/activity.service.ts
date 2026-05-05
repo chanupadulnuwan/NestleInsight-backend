@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
@@ -88,7 +92,10 @@ export class ActivityService {
 
     if (shopOwner?.territoryId) {
       const territoryManager = await this.userRepository.findOne({
-        where: { role: Role.TERRITORY_DISTRIBUTOR, territoryId: shopOwner.territoryId },
+        where: {
+          role: Role.TERRITORY_DISTRIBUTOR,
+          territoryId: shopOwner.territoryId,
+        },
         select: ['id'],
       });
 
@@ -220,7 +227,7 @@ export class ActivityService {
         'fb.createdAt AS "createdAt"',
         'u.firstName AS "firstName"',
         'u.lastName AS "lastName"',
-        'u.shopName AS "shopName"'
+        'u.shopName AS "shopName"',
       ])
       .innerJoin(User, 'u', 'u.id = fb.userId')
       .where('u.territoryId = :territoryId', { territoryId })

@@ -17,7 +17,13 @@ export class Promotion {
   @Column({ name: 'name', type: 'varchar', length: 150 })
   name: string;
 
-  @Column({ name: 'code', type: 'varchar', length: 50, unique: true, nullable: true })
+  @Column({
+    name: 'code',
+    type: 'varchar',
+    length: 50,
+    unique: true,
+    nullable: true,
+  })
   code: string | null;
 
   @Column({ name: 'description', type: 'text', nullable: true })
@@ -44,7 +50,13 @@ export class Promotion {
   @Column({ name: 'min_quantity', type: 'int', nullable: true })
   minQuantity: number | null;
 
-  @Column({ name: 'min_order_value', type: 'decimal', precision: 12, scale: 2, nullable: true })
+  @Column({
+    name: 'min_order_value',
+    type: 'decimal',
+    precision: 12,
+    scale: 2,
+    nullable: true,
+  })
   minOrderValue: number | null;
 
   @Column({ name: 'usage_limit', type: 'int', nullable: true })

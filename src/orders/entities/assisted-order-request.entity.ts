@@ -81,7 +81,12 @@ export class AssistedOrderRequest {
   @Column({ name: 'order_total', type: 'double precision' })
   orderTotal: number;
 
-  @Column({ name: 'currency_code', type: 'varchar', length: 10, default: 'LKR' })
+  @Column({
+    name: 'currency_code',
+    type: 'varchar',
+    length: 10,
+    default: 'LKR',
+  })
   currencyCode: string;
 
   @Column({ name: 'confirmed_order_id', type: 'uuid', nullable: true })
@@ -91,7 +96,11 @@ export class AssistedOrderRequest {
   @JoinColumn({ name: 'confirmed_order_id' })
   confirmedOrder: Order | null;
 
-  @Column({ name: 'requested_at', type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+  @Column({
+    name: 'requested_at',
+    type: 'timestamp',
+    default: () => 'CURRENT_TIMESTAMP',
+  })
   requestedAt: Date;
 
   @Column({ name: 'confirmed_at', type: 'timestamp', nullable: true })

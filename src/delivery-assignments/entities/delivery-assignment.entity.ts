@@ -35,7 +35,11 @@ export class DeliveryAssignment {
   @Column({ name: 'vehicle_id', type: 'uuid', nullable: true })
   vehicleId: string | null;
 
-  @ManyToOne(() => Vehicle, { eager: true, nullable: true, onDelete: 'SET NULL' })
+  @ManyToOne(() => Vehicle, {
+    eager: true,
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
   @JoinColumn({ name: 'vehicle_id' })
   vehicle: Vehicle | null;
 
@@ -45,16 +49,28 @@ export class DeliveryAssignment {
   @Column({ type: 'varchar', length: 20, default: 'ACTIVE' })
   status: string; // ACTIVE | COMPLETED | CANCELLED
 
-  @Column({ name: 'tm_return_pin_hash', type: 'varchar', length: 255, nullable: true })
+  @Column({
+    name: 'tm_return_pin_hash',
+    type: 'varchar',
+    length: 255,
+    nullable: true,
+  })
   tmReturnPinHash: string | null;
 
-  @Column({ name: 'tm_return_pin_expires_at', type: 'timestamp', nullable: true })
+  @Column({
+    name: 'tm_return_pin_expires_at',
+    type: 'timestamp',
+    nullable: true,
+  })
   tmReturnPinExpiresAt: Date | null;
 
   @Column({ type: 'text', nullable: true })
   notes: string | null;
 
-  @OneToMany(() => DeliveryAssignmentOrder, (dao) => dao.assignment, { cascade: true, eager: true })
+  @OneToMany(() => DeliveryAssignmentOrder, (dao) => dao.assignment, {
+    cascade: true,
+    eager: true,
+  })
   assignmentOrders: DeliveryAssignmentOrder[];
 
   @CreateDateColumn({ name: 'created_at' })

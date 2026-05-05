@@ -1,5 +1,8 @@
 import { IsIn, IsString, IsOptional, IsNumber } from 'class-validator';
-import { SalesIncidentType, SalesIncidentSeverity } from '../entities/sales-incident.entity';
+import {
+  SalesIncidentType,
+  SalesIncidentSeverity,
+} from '../entities/sales-incident.entity';
 
 export class ReportIncidentDto {
   @IsString()

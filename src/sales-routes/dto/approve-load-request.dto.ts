@@ -7,9 +7,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 
-import {
-  LoadRequestStockLineDto,
-} from './submit-load-request.dto';
+import { LoadRequestStockLineDto } from './submit-load-request.dto';
 
 export enum LoadRequestDecision {
   APPROVED = 'APPROVED',

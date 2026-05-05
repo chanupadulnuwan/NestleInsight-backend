@@ -1,5 +1,12 @@
 import { Type } from 'class-transformer';
-import { IsDate, IsNumber, IsOptional, IsString, Min, IsArray } from 'class-validator';
+import {
+  IsDate,
+  IsNumber,
+  IsOptional,
+  IsString,
+  Min,
+  IsArray,
+} from 'class-validator';
 
 export class CreatePromotionDto {
   @IsString()

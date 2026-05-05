@@ -24,7 +24,11 @@ export class OrderItem {
   @Column({ name: 'product_id', type: 'uuid', nullable: true })
   productId: string | null;
 
-  @ManyToOne(() => Product, { eager: true, nullable: true, onDelete: 'SET NULL' })
+  @ManyToOne(() => Product, {
+    eager: true,
+    nullable: true,
+    onDelete: 'SET NULL',
+  })
   @JoinColumn({ name: 'product_id' })
   product: Product | null;
 
@@ -34,7 +38,12 @@ export class OrderItem {
   @Column({ name: 'product_name_snapshot', type: 'varchar', length: 160 })
   productNameSnapshot: string;
 
-  @Column({ name: 'pack_size_snapshot', type: 'varchar', length: 60, nullable: true })
+  @Column({
+    name: 'pack_size_snapshot',
+    type: 'varchar',
+    length: 60,
+    nullable: true,
+  })
   packSizeSnapshot: string | null;
 
   @Column({

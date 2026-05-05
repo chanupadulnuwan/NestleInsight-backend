@@ -35,7 +35,12 @@ export class RouteBeatPlanItem {
   @Column({ name: 'outlet_name_snapshot', type: 'varchar', length: 150 })
   outletNameSnapshot: string;
 
-  @Column({ name: 'owner_name_snapshot', type: 'varchar', length: 150, nullable: true })
+  @Column({
+    name: 'owner_name_snapshot',
+    type: 'varchar',
+    length: 150,
+    nullable: true,
+  })
   ownerNameSnapshot: string | null;
 
   @Column({ type: 'varchar', length: 30 })
@@ -50,7 +55,11 @@ export class RouteBeatPlanItem {
   @Column({ name: 'pending_delivery_count', type: 'int', default: 0 })
   pendingDeliveryCount: number;
 
-  @Column({ name: 'pending_delivery_order_ids_json', type: 'jsonb', nullable: true })
+  @Column({
+    name: 'pending_delivery_order_ids_json',
+    type: 'jsonb',
+    nullable: true,
+  })
   pendingDeliveryOrderIdsJson: string[] | null;
 
   @Column({ name: 'sort_order', type: 'int', default: 0 })

@@ -38,7 +38,11 @@ export class RouteApprovalRequest {
   @Column({ type: 'varchar', length: 40 })
   type: RouteApprovalRequestType;
 
-  @Column({ type: 'varchar', length: 30, default: RouteApprovalRequestStatus.PENDING })
+  @Column({
+    type: 'varchar',
+    length: 30,
+    default: RouteApprovalRequestStatus.PENDING,
+  })
   status: RouteApprovalRequestStatus;
 
   @Column({ name: 'requested_message', type: 'text' })

@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 
@@ -44,11 +48,14 @@ export class TmUsersService {
       throw new BadRequestException('Only pending users can be approved.');
     }
 
-    const needsOtpAfterApproval = user.accountStatus === AccountStatus.OTP_PENDING;
+    const needsOtpAfterApproval =
+      user.accountStatus === AccountStatus.OTP_PENDING;
 
     await this.usersRepo.update(targetUserId, {
       approvalStatus: ApprovalStatus.APPROVED,
-      accountStatus: needsOtpAfterApproval ? AccountStatus.OTP_PENDING : AccountStatus.ACTIVE,
+      accountStatus: needsOtpAfterApproval
+        ? AccountStatus.OTP_PENDING
+        : AccountStatus.ACTIVE,
       approvedBy: tm.username,
       approvedAt: new Date(),
       rejectionReason: null,
@@ -121,7 +128,9 @@ export class TmUsersService {
       );
     }
     if (user.warehouseId !== warehouseId) {
-      throw new BadRequestException('This user is not assigned to your warehouse.');
+      throw new BadRequestException(
+        'This user is not assigned to your warehouse.',
+      );
     }
     return user;
   }

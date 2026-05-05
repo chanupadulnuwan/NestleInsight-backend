@@ -47,7 +47,6 @@ export class StoreVisit {
   @Column({ name: 'stop_id', type: 'uuid', nullable: true })
   stopId: string | null;
 
-
   @Column({ name: 'sales_rep_id', type: 'uuid' })
   salesRepId: string;
 
@@ -112,7 +111,11 @@ export class StoreVisit {
   @Column({ name: 'planogram_answers_json', type: 'jsonb', nullable: true })
   planogramAnswersJson: Record<string, unknown>[] | null;
 
-  @Column({ name: 'outlet_feedback_answers_json', type: 'jsonb', nullable: true })
+  @Column({
+    name: 'outlet_feedback_answers_json',
+    type: 'jsonb',
+    nullable: true,
+  })
   outletFeedbackAnswersJson: Record<string, unknown>[] | null;
 
   @Column({
@@ -125,7 +128,11 @@ export class StoreVisit {
   @Column({ name: 'suggested_order_json', type: 'jsonb', nullable: true })
   suggestedOrderJson: Record<string, unknown> | null;
 
-  @Column({ name: 'last_order_date_snapshot', type: 'timestamp', nullable: true })
+  @Column({
+    name: 'last_order_date_snapshot',
+    type: 'timestamp',
+    nullable: true,
+  })
   lastOrderDateSnapshot: Date | null;
 
   @Column({ name: 'has_pending_delivery', type: 'boolean', default: false })

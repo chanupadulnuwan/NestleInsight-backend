@@ -39,28 +39,31 @@ export function findNearestLocation<T extends LocationPoint>(
     return null;
   }
 
-  return locations.reduce((closest, candidate) => {
-    const candidateDistanceKm = calculateDistanceKm(
-      latitude,
-      longitude,
-      candidate.latitude,
-      candidate.longitude,
-    );
+  return locations.reduce(
+    (closest, candidate) => {
+      const candidateDistanceKm = calculateDistanceKm(
+        latitude,
+        longitude,
+        candidate.latitude,
+        candidate.longitude,
+      );
 
-    if (!closest) {
-      return {
-        item: candidate,
-        distanceKm: candidateDistanceKm,
-      };
-    }
-
-    return candidateDistanceKm < closest.distanceKm
-      ? {
+      if (!closest) {
+        return {
           item: candidate,
           distanceKm: candidateDistanceKm,
-        }
-      : closest;
-  }, null as { item: T; distanceKm: number } | null);
+        };
+      }
+
+      return candidateDistanceKm < closest.distanceKm
+        ? {
+            item: candidate,
+            distanceKm: candidateDistanceKm,
+          }
+        : closest;
+    },
+    null as { item: T; distanceKm: number } | null,
+  );
 }
 
 export function buildDefaultInventoryCapacity(productsPerCase: number) {

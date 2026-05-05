@@ -188,12 +188,14 @@ export class TerritoriesService {
         }
       >,
     );
-    const nearestTerritory = findNearestLocation(latitude, longitude, territories);
+    const nearestTerritory = findNearestLocation(
+      latitude,
+      longitude,
+      territories,
+    );
 
     const resolvedTerritory =
-      nearestWarehouse?.item.territory ??
-      nearestTerritory?.item ??
-      null;
+      nearestWarehouse?.item.territory ?? nearestTerritory?.item ?? null;
 
     const resolvedWarehouse = nearestWarehouse?.item ?? null;
 
@@ -207,10 +209,9 @@ export class TerritoriesService {
             name: resolvedTerritory.name,
             slug: resolvedTerritory.slug,
             distanceKm: Number(
-              (
-                nearestWarehouse?.item.territoryId === resolvedTerritory.id
-                  ? nearestWarehouse.distanceKm
-                  : (nearestTerritory?.distanceKm ?? 0)
+              (nearestWarehouse?.item.territoryId === resolvedTerritory.id
+                ? nearestWarehouse.distanceKm
+                : (nearestTerritory?.distanceKm ?? 0)
               ).toFixed(2),
             ),
           }
@@ -255,7 +256,9 @@ export class TerritoriesService {
       shopOwners: users
         .filter((user) => user.role === Role.SHOP_OWNER)
         .map((user) => this.serializeShopOwnerSummary(user)),
-      vehicles: vehicles.map((vehicle) => this.serializeVehicleSummary(vehicle)),
+      vehicles: vehicles.map((vehicle) =>
+        this.serializeVehicleSummary(vehicle),
+      ),
     };
   }
 

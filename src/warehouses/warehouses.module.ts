@@ -29,7 +29,13 @@ import { WarehousesService } from './warehouses.service';
     ]),
   ],
   controllers: [WarehousesController, TmWarehousesController],
-  providers: [WarehousesService, TmWarehousesService, JwtAuthGuard, RolesGuard, PortalApprovalGuard],
+  providers: [
+    WarehousesService,
+    TmWarehousesService,
+    JwtAuthGuard,
+    RolesGuard,
+    PortalApprovalGuard,
+  ],
   exports: [WarehousesService, TypeOrmModule],
 })
 export class WarehousesModule {}

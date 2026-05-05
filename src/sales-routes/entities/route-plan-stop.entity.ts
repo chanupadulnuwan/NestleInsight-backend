@@ -32,7 +32,13 @@ export class RoutePlanStop {
   @Column({ name: 'purpose', type: 'varchar', length: 150 })
   purpose: string;
 
-  @Column({ name: 'priority_score', type: 'decimal', precision: 5, scale: 2, nullable: true })
+  @Column({
+    name: 'priority_score',
+    type: 'decimal',
+    precision: 5,
+    scale: 2,
+    nullable: true,
+  })
   priorityScore: number | null;
 
   @Column({ name: 'status', type: 'varchar', length: 30, default: 'pending' })
@@ -41,6 +47,12 @@ export class RoutePlanStop {
   @Column({ name: 'eta_minutes', type: 'int', nullable: true })
   etaMinutes: number | null;
 
-  @Column({ name: 'distance_km', type: 'decimal', precision: 8, scale: 2, nullable: true })
+  @Column({
+    name: 'distance_km',
+    type: 'decimal',
+    precision: 8,
+    scale: 2,
+    nullable: true,
+  })
   distanceKm: number | null;
 }

@@ -31,7 +31,12 @@ export class OrderReturn {
   @JoinColumn({ name: 'distributor_id' })
   distributor: User;
 
-  @Column({ name: 'return_type', type: 'varchar', length: 20, default: 'WAREHOUSE' })
+  @Column({
+    name: 'return_type',
+    type: 'varchar',
+    length: 20,
+    default: 'WAREHOUSE',
+  })
   returnType: string;
 
   @Column({ name: 'order_id', type: 'uuid', nullable: true })
@@ -43,7 +48,10 @@ export class OrderReturn {
   @Column({ name: 'verification_note', type: 'text', nullable: true })
   verificationNote: string | null;
 
-  @OneToMany(() => ReturnItem, (item) => item.orderReturn, { cascade: true, eager: true })
+  @OneToMany(() => ReturnItem, (item) => item.orderReturn, {
+    cascade: true,
+    eager: true,
+  })
   items: ReturnItem[];
 
   @CreateDateColumn({ name: 'created_at' })

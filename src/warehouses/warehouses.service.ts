@@ -335,7 +335,7 @@ export class WarehousesService {
 
       if (item.reorderLevel > item.maxCapacityCases) {
         throw new BadRequestException(
-        'Refill level cannot exceed the maximum capacity.',
+          'Refill level cannot exceed the maximum capacity.',
         );
       }
 
@@ -409,7 +409,9 @@ export class WarehousesService {
         warehouseId,
       },
     });
-    const existingProductIds = new Set(existingItems.map((item) => item.productId));
+    const existingProductIds = new Set(
+      existingItems.map((item) => item.productId),
+    );
 
     const missingItems = activeProducts
       .filter((product) => !existingProductIds.has(product.id))
@@ -525,7 +527,9 @@ export class WarehousesService {
         .filter((user) => user.role === Role.SHOP_OWNER)
         .filter((user) => user.warehouseId === warehouse.id)
         .map((user) => this.serializeShopOwnerSummary(user)),
-      vehicles: vehicles.map((vehicle) => this.serializeVehicleSummary(vehicle)),
+      vehicles: vehicles.map((vehicle) =>
+        this.serializeVehicleSummary(vehicle),
+      ),
       orders: {
         period: orderWindow,
         summary: orderTotals,
@@ -536,10 +540,7 @@ export class WarehousesService {
           status: order.status,
           totalAmount: order.totalAmount,
           itemCount: order.items.length,
-          totalCases: order.items.reduce(
-            (sum, item) => sum + item.quantity,
-            0,
-          ),
+          totalCases: order.items.reduce((sum, item) => sum + item.quantity, 0),
           placedAt: order.placedAt,
         })),
       },
@@ -549,7 +550,9 @@ export class WarehousesService {
   private serializeInventoryItem(item: WarehouseInventoryItem) {
     const casesOnHand = item.quantityOnHand;
     const unitsOnHand = item.quantityOnHand * item.product.productsPerCase;
-    const stockValue = Number((item.quantityOnHand * item.product.casePrice).toFixed(2));
+    const stockValue = Number(
+      (item.quantityOnHand * item.product.casePrice).toFixed(2),
+    );
 
     return {
       id: item.id,

@@ -29,7 +29,12 @@ export class IncidentReport {
   @JoinColumn({ name: 'reported_by' })
   reporter: User;
 
-  @Column({ name: 'incident_type', type: 'varchar', length: 50, default: 'OTHER' })
+  @Column({
+    name: 'incident_type',
+    type: 'varchar',
+    length: 50,
+    default: 'OTHER',
+  })
   incidentType: string; // VEHICLE_ACCIDENT | ROUTE_ISSUE | CUSTOMER_DISPUTE | OTHER
 
   @Column({ type: 'text', default: '' })

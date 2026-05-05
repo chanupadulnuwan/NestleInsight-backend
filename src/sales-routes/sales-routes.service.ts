@@ -2220,10 +2220,7 @@ export class SalesRoutesService {
         Date.now() + ROUTE_PIN_TTL_MINUTES * 60 * 1000,
       );
 
-      route.warehouseManagerPinHash = await bcrypt.hash(
-        rawPin,
-        BCRYPT_ROUNDS,
-      );
+      route.warehouseManagerPinHash = await bcrypt.hash(rawPin, BCRYPT_ROUNDS);
       route.pinExpiresAt = pinExpiresAt;
       await this.salesRoutesRepo.save(route);
 

@@ -4,7 +4,9 @@ import { RouteApprovalRequestStatus } from '../entities/route-approval-request.e
 
 export class ReviewRouteApprovalRequestDto {
   @IsEnum(RouteApprovalRequestStatus)
-  decision: RouteApprovalRequestStatus.APPROVED | RouteApprovalRequestStatus.REJECTED;
+  decision:
+    | RouteApprovalRequestStatus.APPROVED
+    | RouteApprovalRequestStatus.REJECTED;
 
   @IsOptional()
   @IsString()

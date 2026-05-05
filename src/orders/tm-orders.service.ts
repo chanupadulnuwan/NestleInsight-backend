@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 
@@ -9,10 +13,7 @@ import { ProcessTmOrderDecision } from './dto/process-tm-order.dto';
 import { OrderItem } from './entities/order-item.entity';
 import { Order } from './entities/order.entity';
 import { OrdersService } from './orders.service';
-import {
-  getOrderDueAt,
-  isOrderOverdue,
-} from './order-status.util';
+import { getOrderDueAt, isOrderOverdue } from './order-status.util';
 
 type ProcessingPreviewItem = {
   itemId: string;
@@ -162,7 +163,11 @@ export class TmOrdersService {
       type: 'ORDER_DELAYED',
       title: 'Order delayed',
       message: customerNote,
-      metadata: { orderId: order.id, orderCode: order.orderCode, reason: trimmedReason },
+      metadata: {
+        orderId: order.id,
+        orderCode: order.orderCode,
+        reason: trimmedReason,
+      },
     });
 
     return { message: 'Order marked as delayed.' };
@@ -205,7 +210,8 @@ export class TmOrdersService {
     });
 
     return {
-      message: 'Order is now ready for delivery and has been moved to Proceed status.',
+      message:
+        'Order is now ready for delivery and has been moved to Proceed status.',
     };
   }
 
@@ -226,8 +232,12 @@ export class TmOrdersService {
       );
     }
 
-    const removedProducts = preview.unavailableItems.map((item) => item.productName);
-    const remainingProducts = preview.availableItems.map((item) => item.productName);
+    const removedProducts = preview.unavailableItems.map(
+      (item) => item.productName,
+    );
+    const remainingProducts = preview.availableItems.map(
+      (item) => item.productName,
+    );
     const customerNote = this.buildPartialProceedCustomerNote(
       order.orderCode,
       removedProducts,
@@ -319,11 +329,16 @@ export class TmOrdersService {
     return tm;
   }
 
-  private async requireOrder(orderId: string, warehouseId: string): Promise<Order> {
+  private async requireOrder(
+    orderId: string,
+    warehouseId: string,
+  ): Promise<Order> {
     const order = await this.ordersRepo.findOne({ where: { id: orderId } });
     if (!order) throw new NotFoundException('Order not found.');
     if (order.warehouseId !== warehouseId) {
-      throw new BadRequestException('This order does not belong to your warehouse.');
+      throw new BadRequestException(
+        'This order does not belong to your warehouse.',
+      );
     }
     return order;
   }
@@ -394,7 +409,9 @@ export class TmOrdersService {
         (order.totalAfterDiscount ?? order.totalAmount).toFixed(2),
       ),
       availableTotal: Number(
-        availableItems.reduce((sum, item) => sum + item.lineTotal, 0).toFixed(2),
+        availableItems
+          .reduce((sum, item) => sum + item.lineTotal, 0)
+          .toFixed(2),
       ),
     };
   }
@@ -414,7 +431,10 @@ export class TmOrdersService {
     };
   }
 
-  private normalizeExplanation(value: string | undefined, fallbackMessage: string) {
+  private normalizeExplanation(
+    value: string | undefined,
+    fallbackMessage: string,
+  ) {
     const normalized = value?.trim() ?? '';
     if (normalized.length < 5) {
       throw new BadRequestException(fallbackMessage);

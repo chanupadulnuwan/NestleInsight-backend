@@ -56,7 +56,9 @@ describe('PromotionsService', () => {
   });
 
   it('rejects create when the promotion code already exists', async () => {
-    (promotionRepository.findOne as jest.Mock).mockResolvedValue({ id: 'existing-id' });
+    (promotionRepository.findOne as jest.Mock).mockResolvedValue({
+      id: 'existing-id',
+    });
 
     await expect(
       service.create({ code: 'SAVE20' } as CreatePromotionDto, 'user-1'),
@@ -163,13 +165,14 @@ describe('PromotionsService', () => {
   });
 
   it('rejects update when another promotion already uses the code', async () => {
-    (promotionRepository.findOne as jest.Mock).mockResolvedValue({ id: 'other-promotion' });
+    (promotionRepository.findOne as jest.Mock).mockResolvedValue({
+      id: 'other-promotion',
+    });
 
     await expect(
-      service.update(
-        'current-promotion',
-        { code: 'SAVE20' } as UpdatePromotionDto,
-      ),
+      service.update('current-promotion', {
+        code: 'SAVE20',
+      } as UpdatePromotionDto),
     ).rejects.toBeInstanceOf(ConflictException);
 
     expect(promotionRepository.update).not.toHaveBeenCalled();

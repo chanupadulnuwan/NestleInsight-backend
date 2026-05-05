@@ -11,7 +11,15 @@ import { FeedbackSubmission } from './entities/feedback-submission.entity';
 import { OrderFeedback } from './entities/order-feedback.entity';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([ActivityLog, FeedbackSubmission, OrderFeedback, Order, User])],
+  imports: [
+    TypeOrmModule.forFeature([
+      ActivityLog,
+      FeedbackSubmission,
+      OrderFeedback,
+      Order,
+      User,
+    ]),
+  ],
   controllers: [ActivityController],
   providers: [ActivityService, JwtAuthGuard],
   exports: [ActivityService, TypeOrmModule],

@@ -28,7 +28,7 @@ export function createVisitImageUploadOptions() {
         const timestamp = Date.now();
         const rand = Math.round(Math.random() * 1_000_000);
         const extension = extname(file.originalname).toLowerCase() || '.jpg';
-        
+
         const filename = `visit-${visitId}-${timestamp}-${rand}${extension}`;
         callback(null, filename);
       },

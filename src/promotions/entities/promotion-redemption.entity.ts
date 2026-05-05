@@ -32,6 +32,10 @@ export class PromotionRedemption {
   @Column({ name: 'discount_amount', type: 'decimal', precision: 12, scale: 2 })
   discountAmount: number;
 
-  @Column({ name: 'redeemed_at', type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+  @Column({
+    name: 'redeemed_at',
+    type: 'timestamp',
+    default: () => 'CURRENT_TIMESTAMP',
+  })
   redeemedAt: Date;
 }

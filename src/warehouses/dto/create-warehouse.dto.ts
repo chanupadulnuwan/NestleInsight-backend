@@ -1,5 +1,12 @@
 import { Type } from 'class-transformer';
-import { IsNotEmpty, IsNumber, IsOptional, IsUUID, Max, Min } from 'class-validator';
+import {
+  IsNotEmpty,
+  IsNumber,
+  IsOptional,
+  IsUUID,
+  Max,
+  Min,
+} from 'class-validator';
 
 export class CreateWarehouseDto {
   @IsUUID()

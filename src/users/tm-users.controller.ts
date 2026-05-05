@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Patch, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -33,6 +41,10 @@ export class TmUsersController {
     @Param('id') targetUserId: string,
     @Body() dto: TmRejectUserDto,
   ) {
-    return this.tmUsersService.rejectUser(req.user.userId, targetUserId, dto.reason);
+    return this.tmUsersService.rejectUser(
+      req.user.userId,
+      targetUserId,
+      dto.reason,
+    );
   }
 }

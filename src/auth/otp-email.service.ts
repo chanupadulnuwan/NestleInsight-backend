@@ -30,7 +30,9 @@ export class OtpEmailService {
       };
     }
 
-    const transporter = nodemailer.createTransport(this.buildTransportOptions());
+    const transporter = nodemailer.createTransport(
+      this.buildTransportOptions(),
+    );
 
     await transporter.sendMail({
       from: this.buildFromAddress(),

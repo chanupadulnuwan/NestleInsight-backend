@@ -8,7 +8,11 @@ import {
 } from 'typeorm';
 
 @Entity('route_beat_plan_templates')
-@Unique('uq_route_beat_plan_template_scope', ['salesRepId', 'territoryId', 'warehouseId'])
+@Unique('uq_route_beat_plan_template_scope', [
+  'salesRepId',
+  'territoryId',
+  'warehouseId',
+])
 export class RouteBeatPlanTemplate {
   @PrimaryGeneratedColumn('uuid')
   id: string;

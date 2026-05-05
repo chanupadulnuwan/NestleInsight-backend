@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -24,7 +32,10 @@ export class TmWarehousesController {
 
   @Get('users/:userId')
   getUserDetail(@Req() req: any, @Param('userId') targetUserId: string) {
-    return this.tmWarehousesService.getUserDetail(req.user.userId, targetUserId);
+    return this.tmWarehousesService.getUserDetail(
+      req.user.userId,
+      targetUserId,
+    );
   }
 
   @Post('inventory')

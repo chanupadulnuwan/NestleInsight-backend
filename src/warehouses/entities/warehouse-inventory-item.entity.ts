@@ -13,7 +13,10 @@ import { Product } from '../../products/entities/product.entity';
 import { Warehouse } from './warehouse.entity';
 
 @Entity('warehouse_inventory_items')
-@Unique('uq_warehouse_inventory_warehouse_product', ['warehouseId', 'productId'])
+@Unique('uq_warehouse_inventory_warehouse_product', [
+  'warehouseId',
+  'productId',
+])
 export class WarehouseInventoryItem {
   @PrimaryGeneratedColumn('uuid')
   id: string;

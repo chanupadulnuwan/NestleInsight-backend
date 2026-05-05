@@ -40,10 +40,7 @@ export class DeliveryAssignmentsController {
   @Get()
   @UseGuards(JwtAuthGuard, RolesGuard, PortalApprovalGuard)
   @Roles(Role.REGIONAL_MANAGER)
-  listAssignments(
-    @Request() req: any,
-    @Query('date') date?: string,
-  ) {
+  listAssignments(@Request() req: any, @Query('date') date?: string) {
     return this.service.listAssignments(req.user.userId, date);
   }
 
@@ -138,7 +135,10 @@ export class DeliveryAssignmentsController {
     @Request() req: any,
     @Param('assignmentId') assignmentId: string,
   ) {
-    return this.service.requestWarehouseReturnPin(req.user.userId, assignmentId);
+    return this.service.requestWarehouseReturnPin(
+      req.user.userId,
+      assignmentId,
+    );
   }
 
   @Post('notes')

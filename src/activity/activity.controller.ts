@@ -10,7 +10,7 @@ import { ActivityService } from './activity.service';
 
 @Controller('activities')
 export class ActivityController {
-  constructor(private readonly activityService: ActivityService) { }
+  constructor(private readonly activityService: ActivityService) {}
 
   @UseGuards(JwtAuthGuard)
   @Get()
@@ -26,7 +26,10 @@ export class ActivityController {
 
   @UseGuards(JwtAuthGuard)
   @Post('feedback')
-  submitFeedback(@Req() req: any, @Body() submitFeedbackDto: SubmitFeedbackDto) {
+  submitFeedback(
+    @Req() req: any,
+    @Body() submitFeedbackDto: SubmitFeedbackDto,
+  ) {
     return this.activityService.submitFeedbackForUser(
       req.user?.userId,
       submitFeedbackDto.message,
@@ -42,16 +45,17 @@ export class ActivityController {
    */
   @UseGuards(JwtAuthGuard)
   @Post('order-feedback')
-  submitOrderFeedback(
-    @Req() req: any,
-    @Body() dto: SubmitOrderFeedbackDto,
-  ) {
+  submitOrderFeedback(@Req() req: any, @Body() dto: SubmitOrderFeedbackDto) {
     const { userId: shopOwnerId, territoryId } = req.user as {
       userId: string;
       territoryId: string;
     };
 
-    return this.activityService.submitOrderFeedback(shopOwnerId, territoryId, dto);
+    return this.activityService.submitOrderFeedback(
+      shopOwnerId,
+      territoryId,
+      dto,
+    );
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)

@@ -32,12 +32,8 @@ export class PromotionsService {
       throw new UnauthorizedException('Authenticated user not found.');
     }
 
-    const {
-      eligibleProductIds,
-      eligibleTerritoryIds,
-      code,
-      ...promotionData
-    } = createPromotionDto;
+    const { eligibleProductIds, eligibleTerritoryIds, code, ...promotionData } =
+      createPromotionDto;
     const normalizedCode = this.normalizePromotionCode(code);
 
     await this.ensurePromotionCodeIsUnique(normalizedCode);
@@ -78,13 +74,18 @@ export class PromotionsService {
 
   async findAll(): Promise<Promotion[]> {
     const promotions = await this.promotionRepository.find({
-      relations: ['eligibleProducts', 'eligibleProducts.product', 'eligibleTerritories'],
+      relations: [
+        'eligibleProducts',
+        'eligibleProducts.product',
+        'eligibleTerritories',
+      ],
     });
     return promotions.map((p) => this.mapPromotionRelations(p));
   }
 
   async findActive(territoryId?: string): Promise<Promotion[]> {
-    const qb = this.promotionRepository.createQueryBuilder('promotion')
+    const qb = this.promotionRepository
+      .createQueryBuilder('promotion')
       .leftJoinAndSelect('promotion.eligibleProducts', 'ep')
       .leftJoinAndSelect('ep.product', 'p_prod')
       .leftJoinAndSelect('promotion.eligibleTerritories', 'et')
@@ -130,7 +131,11 @@ export class PromotionsService {
   async findOne(id: string): Promise<Promotion | null> {
     const promotion = await this.promotionRepository.findOne({
       where: { id },
-      relations: ['eligibleProducts', 'eligibleProducts.product', 'eligibleTerritories'],
+      relations: [
+        'eligibleProducts',
+        'eligibleProducts.product',
+        'eligibleTerritories',
+      ],
     });
     return promotion ? this.mapPromotionRelations(promotion) : null;
   }
@@ -140,17 +145,19 @@ export class PromotionsService {
       promotion.eligibleProducts?.map((p) => p.productId) || [];
     promotion.eligibleTerritoryIds =
       promotion.eligibleTerritories?.map((t) => t.territoryId) || [];
-    promotion.eligibleProductNames = promotion.eligibleProducts
-      ?.map((p) => p.product?.productName)
-      .filter((name): name is string => !!name) || [];
+    promotion.eligibleProductNames =
+      promotion.eligibleProducts
+        ?.map((p) => p.product?.productName)
+        .filter((name): name is string => !!name) || [];
 
-    promotion.eligibleProductsDetail = promotion.eligibleProducts
-      ?.map((p) => ({
-        id: p.product?.id,
-        productName: p.product?.productName,
-        imageUrl: p.product?.imageUrl,
-      }))
-      .filter((p) => !!p.id) || [];
+    promotion.eligibleProductsDetail =
+      promotion.eligibleProducts
+        ?.map((p) => ({
+          id: p.product?.id,
+          productName: p.product?.productName,
+          imageUrl: p.product?.imageUrl,
+        }))
+        .filter((p) => !!p.id) || [];
 
     return promotion;
   }
@@ -178,7 +185,10 @@ export class PromotionsService {
     return 'active';
   }
 
-  async update(id: string, updateDto: UpdatePromotionDto): Promise<Promotion | null> {
+  async update(
+    id: string,
+    updateDto: UpdatePromotionDto,
+  ): Promise<Promotion | null> {
     const {
       eligibleProductIds,
       eligibleTerritoryIds,
@@ -192,7 +202,10 @@ export class PromotionsService {
       await this.ensurePromotionCodeIsUnique(normalizedCode, id);
     }
 
-    if (Object.keys(corePromotionData).length > 0 || normalizedCode !== undefined) {
+    if (
+      Object.keys(corePromotionData).length > 0 ||
+      normalizedCode !== undefined
+    ) {
       try {
         await this.promotionRepository.update(id, {
           ...corePromotionData,
@@ -208,7 +221,10 @@ export class PromotionsService {
       await this.promotionProductRepository.delete({ promotionId: id });
       if (eligibleProductIds.length > 0) {
         await this.promotionProductRepository.insert(
-          eligibleProductIds.map((productId) => ({ promotionId: id, productId })),
+          eligibleProductIds.map((productId) => ({
+            promotionId: id,
+            productId,
+          })),
         );
       }
     }
@@ -217,7 +233,10 @@ export class PromotionsService {
       await this.promotionTerritoryRepository.delete({ promotionId: id });
       if (eligibleTerritoryIds.length > 0) {
         await this.promotionTerritoryRepository.insert(
-          eligibleTerritoryIds.map((territoryId) => ({ promotionId: id, territoryId })),
+          eligibleTerritoryIds.map((territoryId) => ({
+            promotionId: id,
+            territoryId,
+          })),
         );
       }
     }
@@ -247,16 +266,24 @@ export class PromotionsService {
       throw new BadRequestException('This promotion is not currently active.');
     }
 
-    if (promotion.eligibleTerritories && promotion.eligibleTerritories.length > 0) {
+    if (
+      promotion.eligibleTerritories &&
+      promotion.eligibleTerritories.length > 0
+    ) {
       const isEligible = promotion.eligibleTerritories.some(
         (t) => t.territoryId === dto.territoryId,
       );
       if (!isEligible) {
-        throw new BadRequestException('Promotion not valid for your territory.');
+        throw new BadRequestException(
+          'Promotion not valid for your territory.',
+        );
       }
     }
 
-    if (promotion.minOrderValue && dto.cartTotal < Number(promotion.minOrderValue)) {
+    if (
+      promotion.minOrderValue &&
+      dto.cartTotal < Number(promotion.minOrderValue)
+    ) {
       throw new BadRequestException(
         `Minimum order value of ${Number(promotion.minOrderValue).toLocaleString()} not met.`,
       );
@@ -302,17 +329,30 @@ export class PromotionsService {
     territoryId: string,
     orderTotal: number,
     productIds: string[],
-  ): Promise<{ valid: boolean; discount: number; message: string; promotionId?: string }> {
+  ): Promise<{
+    valid: boolean;
+    discount: number;
+    message: string;
+    promotionId?: string;
+  }> {
     const promotion = await this.promotionRepository.findOne({
       where: { code, status: 'active' },
     });
     if (!promotion) {
-      return { valid: false, discount: 0, message: 'Invalid or inactive promotion code.' };
+      return {
+        valid: false,
+        discount: 0,
+        message: 'Invalid or inactive promotion code.',
+      };
     }
 
     const now = new Date();
     if (now < promotion.startDate || now > promotion.endDate) {
-      return { valid: false, discount: 0, message: 'Promotion is not currently valid.' };
+      return {
+        valid: false,
+        discount: 0,
+        message: 'Promotion is not currently valid.',
+      };
     }
 
     if (promotion.minOrderValue && orderTotal < promotion.minOrderValue) {
@@ -331,7 +371,11 @@ export class PromotionsService {
         (territory) => territory.territoryId === territoryId,
       );
       if (!isEligibleTerritory) {
-        return { valid: false, discount: 0, message: 'Promotion not valid for this territory.' };
+        return {
+          valid: false,
+          discount: 0,
+          message: 'Promotion not valid for this territory.',
+        };
       }
     }
 
@@ -343,7 +387,11 @@ export class PromotionsService {
         productIds.includes(product.productId),
       );
       if (!hasEligibleProduct) {
-        return { valid: false, discount: 0, message: 'Cart does not contain eligible products.' };
+        return {
+          valid: false,
+          discount: 0,
+          message: 'Cart does not contain eligible products.',
+        };
       }
     }
 
@@ -353,13 +401,23 @@ export class PromotionsService {
       });
 
       if (promotion.usageLimit && redemptions.length >= promotion.usageLimit) {
-        return { valid: false, discount: 0, message: 'Promotion global usage limit reached.' };
+        return {
+          valid: false,
+          discount: 0,
+          message: 'Promotion global usage limit reached.',
+        };
       }
 
       if (promotion.perShopLimit) {
-        const shopRedemptions = redemptions.filter((redemption) => redemption.shopId === shopId);
+        const shopRedemptions = redemptions.filter(
+          (redemption) => redemption.shopId === shopId,
+        );
         if (shopRedemptions.length >= promotion.perShopLimit) {
-          return { valid: false, discount: 0, message: 'Shop usage limit reached for this promotion.' };
+          return {
+            valid: false,
+            discount: 0,
+            message: 'Shop usage limit reached for this promotion.',
+          };
         }
       }
     }
@@ -403,7 +461,9 @@ export class PromotionsService {
     }
 
     const existingPromotion = await this.promotionRepository.findOne({
-      where: excludePromotionId ? { code, id: Not(excludePromotionId) } : { code },
+      where: excludePromotionId
+        ? { code, id: Not(excludePromotionId) }
+        : { code },
       select: { id: true },
     });
 

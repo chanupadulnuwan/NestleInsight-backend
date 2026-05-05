@@ -28,7 +28,12 @@ export class ReturnItem {
   @JoinColumn({ name: 'product_id' })
   product: Product | null;
 
-  @Column({ name: 'product_name_snapshot', type: 'varchar', length: 200, default: '' })
+  @Column({
+    name: 'product_name_snapshot',
+    type: 'varchar',
+    length: 200,
+    default: '',
+  })
   productNameSnapshot: string;
 
   @Column({ type: 'int', default: 0 })

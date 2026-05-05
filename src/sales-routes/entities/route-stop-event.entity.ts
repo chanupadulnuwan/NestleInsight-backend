@@ -23,7 +23,11 @@ export class RouteStopEvent {
   @Column({ name: 'event_type', type: 'varchar', length: 50 })
   eventType: string;
 
-  @Column({ name: 'event_time', type: 'timestamp', default: () => 'CURRENT_TIMESTAMP' })
+  @Column({
+    name: 'event_time',
+    type: 'timestamp',
+    default: () => 'CURRENT_TIMESTAMP',
+  })
   eventTime: Date;
 
   @Column({ name: 'reason_code', type: 'varchar', length: 50, nullable: true })

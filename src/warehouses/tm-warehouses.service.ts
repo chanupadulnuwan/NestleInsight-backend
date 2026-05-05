@@ -7,7 +7,11 @@ import {
   MaxLength,
   Min,
 } from 'class-validator';
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
@@ -87,13 +91,18 @@ export class TmWarehousesService {
       relations: { inventoryItems: { product: true }, managerUser: true },
     });
 
-    if (!warehouse) throw new NotFoundException('Your warehouse was not found.');
+    if (!warehouse)
+      throw new NotFoundException('Your warehouse was not found.');
 
     const territoryVehicles = tm.territoryId
       ? await this.vehiclesRepo.find({ where: { territoryId: tm.territoryId } })
       : [];
-    const vehicles = territoryVehicles.filter((vehicle) => vehicle.warehouseId === tm.warehouseId!);
-    const availableVehicles = territoryVehicles.filter((vehicle) => !vehicle.warehouseId);
+    const vehicles = territoryVehicles.filter(
+      (vehicle) => vehicle.warehouseId === tm.warehouseId!,
+    );
+    const availableVehicles = territoryVehicles.filter(
+      (vehicle) => !vehicle.warehouseId,
+    );
     const users = await this.usersRepo.find({
       where: [
         { warehouseId: tm.warehouseId!, role: Role.TERRITORY_DISTRIBUTOR },
@@ -185,10 +194,14 @@ export class TmWarehousesService {
 
     const allowedRoles = [Role.TERRITORY_DISTRIBUTOR, Role.SHOP_OWNER];
     if (!allowedRoles.includes(user.role)) {
-      throw new BadRequestException('You can only view distributor and shop owner profiles.');
+      throw new BadRequestException(
+        'You can only view distributor and shop owner profiles.',
+      );
     }
     if (user.warehouseId !== tm.warehouseId) {
-      throw new BadRequestException('This user is not assigned to your warehouse.');
+      throw new BadRequestException(
+        'This user is not assigned to your warehouse.',
+      );
     }
 
     return {
@@ -218,15 +231,21 @@ export class TmWarehousesService {
   async addInventoryItem(tmUserId: string, dto: AddInventoryItemDto) {
     const tm = await this.requireTm(tmUserId);
 
-    const product = await this.productsRepo.findOne({ where: { id: dto.productId } });
+    const product = await this.productsRepo.findOne({
+      where: { id: dto.productId },
+    });
     if (!product) throw new NotFoundException('Product not found.');
 
     if (dto.quantityOnHand > dto.maxCapacityCases) {
-      throw new BadRequestException('Cases on hand cannot exceed the maximum capacity.');
+      throw new BadRequestException(
+        'Cases on hand cannot exceed the maximum capacity.',
+      );
     }
 
     if (dto.reorderLevel > dto.maxCapacityCases) {
-      throw new BadRequestException('Refill level cannot exceed the maximum capacity.');
+      throw new BadRequestException(
+        'Refill level cannot exceed the maximum capacity.',
+      );
     }
 
     const existing = await this.inventoryRepo.findOne({
@@ -272,7 +291,9 @@ export class TmWarehousesService {
       where: { registrationNumber: normalizedRegistration },
     });
     if (existingRegistration) {
-      throw new BadRequestException('A vehicle with this registration number already exists.');
+      throw new BadRequestException(
+        'A vehicle with this registration number already exists.',
+      );
     }
 
     const vehicleCode = await this.buildUniqueVehicleCode(
@@ -309,14 +330,20 @@ export class TmWarehousesService {
   async assignVehicle(tmUserId: string, vehicleId: string) {
     const tm = await this.requireTm(tmUserId);
 
-    const vehicle = await this.vehiclesRepo.findOne({ where: { id: vehicleId } });
+    const vehicle = await this.vehiclesRepo.findOne({
+      where: { id: vehicleId },
+    });
     if (!vehicle) throw new NotFoundException('Vehicle not found.');
 
     if (vehicle.territoryId !== tm.territoryId) {
-      throw new BadRequestException('Vehicle does not belong to your territory.');
+      throw new BadRequestException(
+        'Vehicle does not belong to your territory.',
+      );
     }
     if (vehicle.warehouseId && vehicle.warehouseId !== tm.warehouseId) {
-      throw new BadRequestException('Vehicle is already assigned to another warehouse.');
+      throw new BadRequestException(
+        'Vehicle is already assigned to another warehouse.',
+      );
     }
     if (vehicle.warehouseId === tm.warehouseId) {
       return { message: 'Vehicle is already assigned to your warehouse.' };
@@ -347,7 +374,9 @@ export class TmWarehousesService {
     let candidate = baseCode;
     let suffix = 1;
 
-    while (await this.vehiclesRepo.findOne({ where: { vehicleCode: candidate } })) {
+    while (
+      await this.vehiclesRepo.findOne({ where: { vehicleCode: candidate } })
+    ) {
       const suffixLabel = `-${suffix}`;
       candidate = `${baseCode.slice(0, 40 - suffixLabel.length)}${suffixLabel}`;
       suffix += 1;

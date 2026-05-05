@@ -69,7 +69,10 @@ export class FieldMonitoringService {
     const routes = await this.routeRepo
       .createQueryBuilder('r')
       .where('r.salesRepId IN (:...userIds)', { userIds })
-      .andWhere('r.createdAt BETWEEN :dayStart AND :dayEnd', { dayStart, dayEnd })
+      .andWhere('r.createdAt BETWEEN :dayStart AND :dayEnd', {
+        dayStart,
+        dayEnd,
+      })
       .getMany();
 
     const routeIds = routes.map((r) => r.id);
@@ -79,7 +82,10 @@ export class FieldMonitoringService {
       ? await this.sessionRepo
           .createQueryBuilder('s')
           .where('s.userId IN (:...userIds)', { userIds })
-          .andWhere('s.routeDate BETWEEN :dayStart AND :dayEnd', { dayStart, dayEnd })
+          .andWhere('s.routeDate BETWEEN :dayStart AND :dayEnd', {
+            dayStart,
+            dayEnd,
+          })
           .getMany()
       : [];
 
@@ -196,7 +202,10 @@ export class FieldMonitoringService {
     const route = await this.routeRepo
       .createQueryBuilder('r')
       .where('r.salesRepId = :userId', { userId })
-      .andWhere('r.createdAt BETWEEN :dayStart AND :dayEnd', { dayStart, dayEnd })
+      .andWhere('r.createdAt BETWEEN :dayStart AND :dayEnd', {
+        dayStart,
+        dayEnd,
+      })
       .orderBy('r.createdAt', 'DESC')
       .getOne();
 
@@ -204,7 +213,10 @@ export class FieldMonitoringService {
     const session = await this.sessionRepo
       .createQueryBuilder('s')
       .where('s.userId = :userId', { userId })
-      .andWhere('s.routeDate BETWEEN :dayStart AND :dayEnd', { dayStart, dayEnd })
+      .andWhere('s.routeDate BETWEEN :dayStart AND :dayEnd', {
+        dayStart,
+        dayEnd,
+      })
       .orderBy('s.routeDate', 'DESC')
       .getOne();
 
@@ -238,54 +250,60 @@ export class FieldMonitoringService {
             .getMany()
         : [];
 
-      routeTimeline = await Promise.all(stops.map(async (stop) => {
-        const stopEvts = events.filter((e) => e.stopId === stop.id);
-        const outlet = outletById.get(stop.outletId);
-        const arrivedAt = stopEvts.find((e) => e.eventType === 'ARRIVED')?.eventTime ?? null;
-        const completedAt =
-          stopEvts.find((e) => e.eventType === 'COMPLETED' || e.eventType === 'COMPLETE')
-            ?.eventTime ?? null;
-        const skippedAt =
-          stopEvts.find((e) => e.eventType === 'SKIPPED' || e.eventType === 'SKIP')
-            ?.eventTime ?? null;
+      routeTimeline = await Promise.all(
+        stops.map(async (stop) => {
+          const stopEvts = events.filter((e) => e.stopId === stop.id);
+          const outlet = outletById.get(stop.outletId);
+          const arrivedAt =
+            stopEvts.find((e) => e.eventType === 'ARRIVED')?.eventTime ?? null;
+          const completedAt =
+            stopEvts.find(
+              (e) => e.eventType === 'COMPLETED' || e.eventType === 'COMPLETE',
+            )?.eventTime ?? null;
+          const skippedAt =
+            stopEvts.find(
+              (e) => e.eventType === 'SKIPPED' || e.eventType === 'SKIP',
+            )?.eventTime ?? null;
 
-        let durationMinutes: number | null = null;
-        if (arrivedAt && completedAt) {
-          durationMinutes = Math.round(
-            (new Date(completedAt).getTime() - new Date(arrivedAt).getTime()) / 60000,
-          );
-        }
+          let durationMinutes: number | null = null;
+          if (arrivedAt && completedAt) {
+            durationMinutes = Math.round(
+              (new Date(completedAt).getTime() -
+                new Date(arrivedAt).getTime()) /
+                60000,
+            );
+          }
 
-        // Fetch visit data for photos
-        const visit = await this.visitRepo.findOne({
-          where: { stopId: stop.id },
-          select: ['photoUrls', 'shopNameSnapshot'],
-        });
+          // Fetch visit data for photos
+          const visit = await this.visitRepo.findOne({
+            where: { stopId: stop.id },
+            select: ['photoUrls', 'shopNameSnapshot'],
+          });
 
-        return {
-          stopId: stop.id,
-          sequence: stop.actualSeq ?? stop.suggestedSeq,
-          outletId: stop.outletId,
-          outletName:
-            outlet?.outletName ??
-            visit?.shopNameSnapshot ??
-            `Outlet #${stop.outletId.slice(0, 6)}`,
-          outletAddress: outlet?.address ?? null,
-          latitude: outlet?.latitude ?? null,
-          longitude: outlet?.longitude ?? null,
-          purpose: stop.purpose,
-          status: stop.status,
-          etaMinutes: stop.etaMinutes,
-          distanceKm: stop.distanceKm,
-          durationMinutes,
-          arrivedAt,
-          completedAt,
-          skippedAt,
-          reasonCode:
-            stopEvts.find((e) => e.reasonCode)?.reasonCode ?? null,
-          photoUrls: visit?.photoUrls ?? [],
-        };
-      }));
+          return {
+            stopId: stop.id,
+            sequence: stop.actualSeq ?? stop.suggestedSeq,
+            outletId: stop.outletId,
+            outletName:
+              outlet?.outletName ??
+              visit?.shopNameSnapshot ??
+              `Outlet #${stop.outletId.slice(0, 6)}`,
+            outletAddress: outlet?.address ?? null,
+            latitude: outlet?.latitude ?? null,
+            longitude: outlet?.longitude ?? null,
+            purpose: stop.purpose,
+            status: stop.status,
+            etaMinutes: stop.etaMinutes,
+            distanceKm: stop.distanceKm,
+            durationMinutes,
+            arrivedAt,
+            completedAt,
+            skippedAt,
+            reasonCode: stopEvts.find((e) => e.reasonCode)?.reasonCode ?? null,
+            photoUrls: visit?.photoUrls ?? [],
+          };
+        }),
+      );
 
       skipLog = routeTimeline
         .filter((s) => s.status === 'skipped' || s.skippedAt)

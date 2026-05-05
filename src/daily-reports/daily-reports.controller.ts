@@ -21,7 +21,7 @@ import { DailyReportsService } from './daily-reports.service';
 @Controller('daily-reports')
 @UseGuards(JwtAuthGuard)
 export class DailyReportsController {
-  constructor(private readonly reportsService: DailyReportsService) { }
+  constructor(private readonly reportsService: DailyReportsService) {}
 
   @Post('generate')
   @UseGuards(RolesGuard)

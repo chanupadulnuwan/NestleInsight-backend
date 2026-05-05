@@ -33,7 +33,12 @@ import { ReturnItem } from './entities/return-item.entity';
     ]),
   ],
   controllers: [DeliveryAssignmentsController],
-  providers: [DeliveryAssignmentsService, JwtAuthGuard, RolesGuard, PortalApprovalGuard],
+  providers: [
+    DeliveryAssignmentsService,
+    JwtAuthGuard,
+    RolesGuard,
+    PortalApprovalGuard,
+  ],
   exports: [DeliveryAssignmentsService, TypeOrmModule],
 })
 export class DeliveryAssignmentsModule {}

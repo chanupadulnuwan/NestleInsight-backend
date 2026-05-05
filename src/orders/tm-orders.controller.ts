@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Param, Patch, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -27,7 +35,10 @@ export class TmOrdersController {
 
   @Get(':id/process-preview')
   previewOrderProcessing(@Req() req: any, @Param('id') orderId: string) {
-    return this.tmOrdersService.previewOrderProcessing(req.user.userId, orderId);
+    return this.tmOrdersService.previewOrderProcessing(
+      req.user.userId,
+      orderId,
+    );
   }
 
   @Patch(':id/process')
@@ -45,7 +56,15 @@ export class TmOrdersController {
   }
 
   @Patch(':id/delay')
-  delayOrder(@Req() req: any, @Param('id') orderId: string, @Body() dto: DelayOrderDto) {
-    return this.tmOrdersService.delayOrder(req.user.userId, orderId, dto.reason);
+  delayOrder(
+    @Req() req: any,
+    @Param('id') orderId: string,
+    @Body() dto: DelayOrderDto,
+  ) {
+    return this.tmOrdersService.delayOrder(
+      req.user.userId,
+      orderId,
+      dto.reason,
+    );
   }
 }

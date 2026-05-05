@@ -1,4 +1,10 @@
-import { IsArray, IsDateString, IsOptional, IsString, IsUUID } from 'class-validator';
+import {
+  IsArray,
+  IsDateString,
+  IsOptional,
+  IsString,
+  IsUUID,
+} from 'class-validator';
 
 export class CreateAssignmentDto {
   @IsUUID()
