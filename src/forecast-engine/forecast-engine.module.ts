@@ -33,5 +33,6 @@ import { ForecastEngineService } from './forecast-engine.service';
   ],
   controllers: [ForecastEngineController],
   providers: [ForecastEngineService, JwtAuthGuard, RolesGuard],
+  exports: [ForecastEngineService],
 })
 export class ForecastEngineModule {}

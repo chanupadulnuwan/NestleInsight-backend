@@ -46,6 +46,7 @@ export class SpaFallbackFilter implements ExceptionFilter {
       '/delivery-assignments',
       '/exports',
       '/forecast-engine',
+      '/insight-center',
       '/promotions',
       '/activities',
     ];
