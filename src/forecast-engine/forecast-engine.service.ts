@@ -365,7 +365,7 @@ export class ForecastEngineService {
     query: ForecastEngineQuery,
   ): Promise<ForecastPreview> {
     const filters = this.normalizeFilters(query);
-    const bundle = parseForecastExportBundle(buffer);
+    const bundle = this.parseImportedBundle(buffer);
     const importedRows = this.filterImportedPlannerRows(bundle.forecastRows, filters);
     const result = this.buildForecastResultFromImportedBundle(bundle, filters);
 
@@ -418,6 +418,18 @@ export class ForecastEngineService {
     const filename = `ars_demand_forecast_planner_${preview.summary.generatedAt.slice(0, 10)}.pdf`;
     const pdfBuffer = await this.createPlannerPdf(preview);
     return { filename, buffer: pdfBuffer };
+  }
+
+  private parseImportedBundle(buffer: Buffer) {
+    try {
+      return parseForecastExportBundle(buffer);
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message.trim()
+          ? error.message
+          : 'The uploaded export ZIP could not be read.';
+      throw new BadRequestException(message);
+    }
   }
 
   private async buildForecastResult(query: ForecastEngineQuery): Promise<ForecastResult> {
@@ -1196,6 +1208,10 @@ export class ForecastEngineService {
     });
     const chunks: Buffer[] = [];
     document.on('data', (chunk: Buffer) => chunks.push(chunk));
+    const selectedProductLabel =
+      preview.controls.products.find(
+        (product) => product.value === (preview.summary.selectedProductId ?? ''),
+      )?.label ?? 'All products';
 
     const pageWidth = document.page.width - document.page.margins.left - document.page.margins.right;
     const drawMetric = (
@@ -1304,7 +1320,12 @@ export class ForecastEngineService {
     }
 
     document.moveDown(0.5);
-    this.drawForecastLineChart(document, preview.manufacturePlan, pageWidth);
+    this.drawForecastLineChart(
+      document,
+      preview.manufacturePlan,
+      pageWidth,
+      selectedProductLabel,
+    );
 
     document.moveDown(0.8);
     document
@@ -1374,13 +1395,15 @@ export class ForecastEngineService {
     document: any,
     plan: ManufacturePlanPoint[],
     width: number,
+    productLabel: string,
   ) {
-    const chartHeight = 170;
+    const chartHeight = 190;
     const chartWidth = width;
     const left = document.x;
     const top = document.y;
     const values = plan.flatMap((point) => [
-      point.total_forecast_cases,
+      point.replenishment_forecast_cases,
+      point.retail_offtake_forecast_cases,
       point.recommended_manufacture_cases,
     ]);
     const maxValue = Math.max(1, ...values);
@@ -1393,29 +1416,39 @@ export class ForecastEngineService {
       .fillColor('#5d6d60')
       .fontSize(10)
       .text(
-        'Forecast demand is shown against the suggested daily manufacturing pace for the selected horizon.',
+        `Product scope: ${productLabel}. Values are shown as cases per day across the forecast dates.`,
         left,
         top + 18,
         { width: chartWidth },
       );
 
-    const plotTop = top + 48;
-    const plotHeight = chartHeight - 36;
+    const plotTop = top + 58;
+    const plotHeight = chartHeight - 62;
     const plotBottom = plotTop + plotHeight;
+    const plotLeft = left + 42;
+    const plotRight = left + chartWidth - 10;
+    const plotWidth = plotRight - plotLeft;
     const pointSpacing =
-      plan.length > 1 ? (chartWidth - 30) / Math.max(1, plan.length - 1) : 0;
+      plan.length > 1 ? plotWidth / Math.max(1, plan.length - 1) : 0;
 
     document.lineWidth(1).strokeColor('#d7e4d2');
     for (let index = 0; index < 4; index += 1) {
       const y = plotTop + (plotHeight / 3) * index;
-      document.moveTo(left, y).lineTo(left + chartWidth, y).stroke();
+      document.moveTo(plotLeft, y).lineTo(plotRight, y).stroke();
+      document
+        .fillColor('#7a8772')
+        .fontSize(8)
+        .text(formatCases(maxValue - (maxValue / 3) * index), left, y - 4, {
+          width: 34,
+          align: 'right',
+        });
     }
 
     const drawSeries = (color: string, extractor: (point: ManufacturePlanPoint) => number) => {
       document.strokeColor(color).lineWidth(2);
       plan.forEach((point, index) => {
         const value = extractor(point);
-        const x = left + 15 + pointSpacing * index;
+        const x = plotLeft + pointSpacing * index;
         const y = plotBottom - (value / maxValue) * plotHeight;
         if (index === 0) {
           document.moveTo(x, y);
@@ -1428,12 +1461,30 @@ export class ForecastEngineService {
       }
     };
 
-    drawSeries('#54715a', (point) => point.total_forecast_cases);
+    drawSeries('#54715a', (point) => point.replenishment_forecast_cases);
+    drawSeries('#3d8f9b', (point) => point.retail_offtake_forecast_cases);
     drawSeries('#b6793f', (point) => point.recommended_manufacture_cases);
 
-    document.fillColor('#54715a').fontSize(9).text('Forecast demand', left, plotBottom + 10);
-    document.fillColor('#b6793f').fontSize(9).text('Suggested manufacture', left + 100, plotBottom + 10);
-    document.y = plotBottom + 28;
+    const labelIndexes = [...new Set([0, Math.floor((plan.length - 1) / 2), plan.length - 1])]
+      .filter((index) => index >= 0 && index < plan.length);
+    for (const index of labelIndexes) {
+      const point = plan[index];
+      const x = plotLeft + pointSpacing * index;
+      document
+        .fillColor('#7a8772')
+        .fontSize(8)
+        .text(point.date.slice(5), x - 12, plotBottom + 6, {
+          width: 24,
+          align: 'center',
+        });
+    }
+
+    document.fillColor('#7a8772').fontSize(8).text('Cases per day', left, plotTop - 12);
+    document.fillColor('#7a8772').fontSize(8).text('Forecast date', plotLeft, plotBottom + 20);
+    document.fillColor('#54715a').fontSize(9).text('Replenishment demand', left, plotBottom + 34);
+    document.fillColor('#3d8f9b').fontSize(9).text('Estimated retail offtake', left + 128, plotBottom + 34);
+    document.fillColor('#b6793f').fontSize(9).text('Suggested manufacture', left + 284, plotBottom + 34);
+    document.y = plotBottom + 52;
   }
 
   private normalizeFilters(query: ForecastEngineQuery): ForecastFilters {
