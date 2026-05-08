@@ -198,6 +198,10 @@ export class ForecastEngineService {
     };
   }
 
+  async generateForecastData(query: ForecastEngineQuery) {
+    return this.buildForecastResult(query);
+  }
+
   async generateForecastReport(query: ForecastEngineQuery) {
     const result = await this.buildForecastResult(query);
     const modifiedAt = new Date(result.summary.generatedAt);
