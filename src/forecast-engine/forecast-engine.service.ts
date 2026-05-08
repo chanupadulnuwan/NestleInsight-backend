@@ -958,10 +958,10 @@ export class ForecastEngineService {
 
         const reasonSummary =
           action === 'INCREASE'
-            ? `Increase output to close an estimated ${formatCases(recommendedProductionCases)} case gap against projected demand and safety stock.`
+            ? `Manufacture ${formatCases(recommendedProductionCases)} cases of ${group.product_name} across the horizon to cover projected demand and safety stock.`
             : action === 'DECREASE'
-              ? 'Slow output because inventory already covers the current demand picture with buffer.'
-              : 'Hold output near the current pace while monitoring local demand changes and stock cover.';
+              ? `Manufacture ${formatCases(recommendedProductionCases)} additional cases of ${group.product_name}; current stock already covers most of the horizon.`
+              : `Manufacture about ${formatCases(recommendedProductionCases)} cases of ${group.product_name} while holding the current pace and watching local demand changes.`;
 
         return {
           recommendation_id: `${group.product_id}|${action}`,
@@ -1345,7 +1345,7 @@ export class ForecastEngineService {
         .fillColor('#243022')
         .fontSize(11)
         .text(
-          `${recommendation.product_name} | ${recommendation.action} | ${recommendation.urgency}`,
+          `Manufacture ${formatCases(recommendation.recommended_production_cases)} cases of ${recommendation.product_name} | ${recommendation.action} | ${recommendation.urgency}`,
           document.x + 12,
           document.y + 10,
           { width: pageWidth - 24 },
@@ -1397,13 +1397,19 @@ export class ForecastEngineService {
     width: number,
     productLabel: string,
   ) {
+    const aggregated = this.aggregateManufacturePlanForChart(plan);
+    const chartPoints = aggregated.points;
+    const unitLabel =
+      aggregated.cadence === 'monthly'
+        ? 'cases per month'
+        : aggregated.cadence === 'weekly'
+          ? 'cases per week'
+          : 'cases per day';
     const chartHeight = 190;
     const chartWidth = width;
     const left = document.x;
     const top = document.y;
-    const values = plan.flatMap((point) => [
-      point.replenishment_forecast_cases,
-      point.retail_offtake_forecast_cases,
+    const values = chartPoints.flatMap((point) => [
       point.recommended_manufacture_cases,
     ]);
     const maxValue = Math.max(1, ...values);
@@ -1416,7 +1422,7 @@ export class ForecastEngineService {
       .fillColor('#5d6d60')
       .fontSize(10)
       .text(
-        `Product scope: ${productLabel}. Values are shown as cases per day across the forecast dates.`,
+        `Product scope: ${productLabel}. Values show suggested manufacture in cases ${aggregated.cadence === 'monthly' ? 'per month' : aggregated.cadence === 'weekly' ? 'per week' : 'per day'} across the forecast horizon.`,
         left,
         top + 18,
         { width: chartWidth },
@@ -1429,7 +1435,7 @@ export class ForecastEngineService {
     const plotRight = left + chartWidth - 10;
     const plotWidth = plotRight - plotLeft;
     const pointSpacing =
-      plan.length > 1 ? plotWidth / Math.max(1, plan.length - 1) : 0;
+      chartPoints.length > 1 ? plotWidth / Math.max(1, chartPoints.length - 1) : 0;
 
     document.lineWidth(1).strokeColor('#d7e4d2');
     for (let index = 0; index < 4; index += 1) {
@@ -1446,7 +1452,7 @@ export class ForecastEngineService {
 
     const drawSeries = (color: string, extractor: (point: ManufacturePlanPoint) => number) => {
       document.strokeColor(color).lineWidth(2);
-      plan.forEach((point, index) => {
+      chartPoints.forEach((point, index) => {
         const value = extractor(point);
         const x = plotLeft + pointSpacing * index;
         const y = plotBottom - (value / maxValue) * plotHeight;
@@ -1456,35 +1462,102 @@ export class ForecastEngineService {
           document.lineTo(x, y);
         }
       });
-      if (plan.length > 0) {
+      if (chartPoints.length > 0) {
         document.stroke();
       }
     };
 
-    drawSeries('#54715a', (point) => point.replenishment_forecast_cases);
-    drawSeries('#3d8f9b', (point) => point.retail_offtake_forecast_cases);
     drawSeries('#b6793f', (point) => point.recommended_manufacture_cases);
 
-    const labelIndexes = [...new Set([0, Math.floor((plan.length - 1) / 2), plan.length - 1])]
-      .filter((index) => index >= 0 && index < plan.length);
+    const labelIndexes = [...new Set([0, Math.floor((chartPoints.length - 1) / 2), chartPoints.length - 1])]
+      .filter((index) => index >= 0 && index < chartPoints.length);
     for (const index of labelIndexes) {
-      const point = plan[index];
+      const point = chartPoints[index];
       const x = plotLeft + pointSpacing * index;
       document
         .fillColor('#7a8772')
         .fontSize(8)
-        .text(point.date.slice(5), x - 12, plotBottom + 6, {
-          width: 24,
+        .text(this.formatManufactureChartLabel(point.date, aggregated.cadence), x - 22, plotBottom + 6, {
+          width: 44,
           align: 'center',
         });
     }
 
-    document.fillColor('#7a8772').fontSize(8).text('Cases per day', left, plotTop - 12);
+    document.fillColor('#7a8772').fontSize(8).text(unitLabel, left, plotTop - 12);
     document.fillColor('#7a8772').fontSize(8).text('Forecast date', plotLeft, plotBottom + 20);
-    document.fillColor('#54715a').fontSize(9).text('Replenishment demand', left, plotBottom + 34);
-    document.fillColor('#3d8f9b').fontSize(9).text('Estimated retail offtake', left + 128, plotBottom + 34);
-    document.fillColor('#b6793f').fontSize(9).text('Suggested manufacture', left + 284, plotBottom + 34);
+    document.fillColor('#b6793f').fontSize(9).text('Suggested manufacture', left, plotBottom + 34);
     document.y = plotBottom + 52;
+  }
+
+  private aggregateManufacturePlanForChart(plan: ManufacturePlanPoint[]) {
+    if (plan.length <= 45) {
+      return {
+        cadence: 'daily' as const,
+        points: plan,
+      };
+    }
+
+    if (plan.length <= 120) {
+      const weeklyBuckets = new Map<string, ManufacturePlanPoint>();
+      plan.forEach((point, index) => {
+        const bucketIndex = Math.floor(index / 7);
+        const bucketKey = `${point.date}|week-${bucketIndex}`;
+        const existing = weeklyBuckets.get(bucketKey) ?? {
+          date: point.date,
+          total_forecast_cases: 0,
+          replenishment_forecast_cases: 0,
+          retail_offtake_forecast_cases: 0,
+          recommended_manufacture_cases: 0,
+        };
+        existing.total_forecast_cases += point.total_forecast_cases;
+        existing.replenishment_forecast_cases += point.replenishment_forecast_cases;
+        existing.retail_offtake_forecast_cases += point.retail_offtake_forecast_cases;
+        existing.recommended_manufacture_cases += point.recommended_manufacture_cases;
+        weeklyBuckets.set(bucketKey, existing);
+      });
+
+      return {
+        cadence: 'weekly' as const,
+        points: [...weeklyBuckets.values()],
+      };
+    }
+
+    const monthlyBuckets = new Map<string, ManufacturePlanPoint>();
+    plan.forEach((point) => {
+      const monthKey = point.date.slice(0, 7);
+      const existing = monthlyBuckets.get(monthKey) ?? {
+        date: `${monthKey}-01`,
+        total_forecast_cases: 0,
+        replenishment_forecast_cases: 0,
+        retail_offtake_forecast_cases: 0,
+        recommended_manufacture_cases: 0,
+      };
+      existing.total_forecast_cases += point.total_forecast_cases;
+      existing.replenishment_forecast_cases += point.replenishment_forecast_cases;
+      existing.retail_offtake_forecast_cases += point.retail_offtake_forecast_cases;
+      existing.recommended_manufacture_cases += point.recommended_manufacture_cases;
+      monthlyBuckets.set(monthKey, existing);
+    });
+
+    return {
+      cadence: 'monthly' as const,
+      points: [...monthlyBuckets.values()],
+    };
+  }
+
+  private formatManufactureChartLabel(
+    date: string,
+    cadence: 'daily' | 'weekly' | 'monthly',
+  ) {
+    if (cadence === 'monthly') {
+      return date.slice(0, 7);
+    }
+
+    if (cadence === 'weekly') {
+      return `Wk ${date.slice(5)}`;
+    }
+
+    return date.slice(5);
   }
 
   private normalizeFilters(query: ForecastEngineQuery): ForecastFilters {
