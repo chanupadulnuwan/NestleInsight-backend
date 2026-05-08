@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import PDFDocument from 'pdfkit';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
@@ -13,13 +14,20 @@ import { SalesIncident } from '../sales-incidents/entities/sales-incident.entity
 import { StoreVisit, StoreVisitStatus } from '../store-visits/entities/store-visit.entity';
 import { WarehouseInventoryItem } from '../warehouses/entities/warehouse-inventory-item.entity';
 import { toCsv, type CsvColumn } from '../exports/utils/csv.util';
-import { createZip } from '../exports/utils/zip.util';
+import {
+  parseForecastExportBundle,
+  type ImportedDemandType,
+  type ImportedForecastBundle,
+  type ImportedPlannerForecastRow,
+} from './forecast-engine-import.util';
 
 type ForecastEngineQuery = {
   fromDate?: string;
   toDate?: string;
   forecastDays?: string;
   backtestDays?: string;
+  productId?: string;
+  planningWindow?: string;
 };
 
 type ForecastFilters = {
@@ -27,6 +35,8 @@ type ForecastFilters = {
   toDate: Date;
   forecastDays: number;
   backtestDays: number;
+  productId: string | null;
+  planningWindow: string;
   generatedAt: Date;
   exportDateKey: string;
 };
@@ -149,6 +159,102 @@ type ForecastResult = {
   aiExplanations: AiExplanationRow[];
 };
 
+type ForecastControlOption = {
+  value: string;
+  label: string;
+  days?: number;
+  sku?: string;
+};
+
+type ManufacturePlanPoint = {
+  date: string;
+  total_forecast_cases: number;
+  replenishment_forecast_cases: number;
+  retail_offtake_forecast_cases: number;
+  recommended_manufacture_cases: number;
+};
+
+type PlannerRecommendation = {
+  recommendation_id: string;
+  product_id: string;
+  product_name: string;
+  forecast_cases: number;
+  replenishment_forecast_cases: number;
+  retail_offtake_forecast_cases: number;
+  current_stock_cases: number;
+  safety_stock_cases: number;
+  required_cases: number;
+  recommended_production_cases: number;
+  suggested_daily_manufacture_cases: number;
+  average_confidence_score: number;
+  action: 'INCREASE' | 'HOLD' | 'DECREASE';
+  urgency: 'HIGH' | 'MEDIUM' | 'LOW';
+  reason_summary: string;
+  reasons: string[];
+  horizon_start: string;
+  horizon_end: string;
+};
+
+type PlannerBrief = {
+  title: string;
+  headline: string;
+  executiveSummary: string;
+  topics: Array<{ title: string; detail: string }>;
+};
+
+type ForecastPreview = {
+  summary: ForecastResult['summary'] & {
+    planningWindow: string;
+    selectedProductId: string | null;
+    sourceMode: 'live' | 'imported_bundle';
+  };
+  controls: {
+    planningWindows: ForecastControlOption[];
+    products: ForecastControlOption[];
+  };
+  sourceSummary: {
+    mode: 'live' | 'imported_bundle';
+    label: string;
+    packageName: string | null;
+    note: string;
+  };
+  plannerBrief: PlannerBrief;
+  manufacturePlan: ManufacturePlanPoint[];
+  productionRecommendations: PlannerRecommendation[];
+  forecastOutput: ForecastOutputRow[];
+  accuracyReport: AccuracyRow[];
+  exceptions: ExceptionRow[];
+  confidenceScores: ConfidenceRow[];
+  aiExplanations: AiExplanationRow[];
+};
+
+type PlannerInventoryRow = {
+  product_id: string;
+  warehouse_id: string | null;
+  quantity_on_hand: number;
+};
+
+type PlannerForecastRow = {
+  forecast_date: string;
+  demand_type: DemandType | ImportedDemandType;
+  product_id: string;
+  product_name: string;
+  territory_id: string | null;
+  warehouse_id: string | null;
+  forecast_cases: number;
+  confidence_score: number;
+  confidence_level: string;
+  weighted_recent_demand_cases?: number;
+  seasonal_pattern_adjustment_cases?: number;
+  promotion_adjustment_cases?: number;
+  stockout_adjustment_cases?: number;
+  visit_frequency_adjustment_cases?: number;
+  incident_or_disruption_adjustment_cases?: number;
+  avg_daily_cases_7d?: number;
+  avg_daily_cases_28d?: number;
+  promotion_flag?: boolean;
+};
+
 const MODEL_VERSION = 'ARS-HYBRID-WMA-1.0';
 const ACTIVE_PROMOTION_STATUSES = new Set(['active', 'scheduled']);
 const ORDER_DEMAND_STATUSES = new Set([
@@ -159,6 +265,20 @@ const ORDER_DEMAND_STATUSES = new Set([
   'PARTIAL',
   'DELAYED',
 ]);
+const PLANNING_WINDOWS = [
+  { value: 'next_week', label: 'Next week', days: 7 },
+  { value: 'next_2_weeks', label: 'Next 2 weeks', days: 14 },
+  { value: 'next_month', label: 'Next month', days: 30 },
+  { value: 'next_quarter', label: 'Next quarter', days: 90 },
+  { value: 'next_6_months', label: 'Next 6 months', days: 180 },
+  { value: 'next_year', label: 'Next year', days: 365 },
+] as const;
+
+function formatCases(value: number) {
+  return Number.isFinite(value)
+    ? value.toLocaleString(undefined, { maximumFractionDigits: 1 })
+    : '0';
+}
 
 @Injectable()
 export class ForecastEngineService {
@@ -185,54 +305,119 @@ export class ForecastEngineService {
     private readonly warehouseInventoryRepo: Repository<WarehouseInventoryItem>,
   ) {}
 
-  async generateForecastPreview(query: ForecastEngineQuery) {
-    const result = await this.buildForecastResult(query);
+  async generateForecastPreview(query: ForecastEngineQuery): Promise<ForecastPreview> {
+    const filters = this.normalizeFilters(query);
+    const result = this.filterForecastResult(
+      await this.buildForecastResult(query),
+      filters,
+    );
+    const [products, inventoryItems] = await Promise.all([
+      this.productsRepo.find({ order: { productName: 'ASC' } }),
+      this.warehouseInventoryRepo.find({ relations: { product: true } }),
+    ]);
 
-    return {
-      summary: result.summary,
-      forecastOutput: result.forecastOutput.slice(0, 60),
-      accuracyReport: result.accuracyReport.slice(0, 40),
-      exceptions: result.exceptions.slice(0, 50),
-      confidenceScores: result.confidenceScores.slice(0, 60),
-      aiExplanations: result.aiExplanations.slice(0, 40),
-    };
+    return this.buildPlannerPreview({
+      filters,
+      result,
+      plannerForecastRows: result.forecastOutput.map((row) => ({
+        forecast_date: row.forecast_date,
+        demand_type: row.demand_type,
+        product_id: row.product_id,
+        product_name: row.product_name,
+        territory_id: row.territory_id,
+        warehouse_id: row.warehouse_id,
+        forecast_cases: row.forecast_cases,
+        confidence_score: row.confidence_score,
+        confidence_level: row.confidence_level,
+        weighted_recent_demand_cases: row.weighted_recent_demand_cases,
+        seasonal_pattern_adjustment_cases: row.seasonal_pattern_adjustment_cases,
+        promotion_adjustment_cases: row.promotion_adjustment_cases,
+        stockout_adjustment_cases: row.stockout_adjustment_cases,
+        visit_frequency_adjustment_cases: row.visit_frequency_adjustment_cases,
+        incident_or_disruption_adjustment_cases:
+          row.incident_or_disruption_adjustment_cases,
+      })),
+      inventoryRows: inventoryItems.map((item) => ({
+        product_id: item.productId,
+        warehouse_id: item.warehouseId,
+        quantity_on_hand: this.readNumber(item.quantityOnHand),
+      })),
+      products: products.map((product) => ({
+        value: product.id,
+        label: product.productName,
+        sku: product.sku,
+      })),
+      sourceSummary: {
+        mode: 'live',
+        label: 'Live demand data',
+        packageName: null,
+        note: 'Forecast calculated from the current platform orders, visits, field notes, and warehouse stock.',
+      },
+    });
   }
 
   async generateForecastData(query: ForecastEngineQuery) {
     return this.buildForecastResult(query);
   }
 
-  async generateForecastReport(query: ForecastEngineQuery) {
-    const result = await this.buildForecastResult(query);
-    const modifiedAt = new Date(result.summary.generatedAt);
-    const filename = `ars_demand_forecast_engine_${result.summary.generatedAt.slice(0, 10)}.zip`;
+  async generateImportedForecastPreview(
+    buffer: Buffer,
+    query: ForecastEngineQuery,
+  ): Promise<ForecastPreview> {
+    const filters = this.normalizeFilters(query);
+    const bundle = parseForecastExportBundle(buffer);
+    const importedRows = this.filterImportedPlannerRows(bundle.forecastRows, filters);
+    const result = this.buildForecastResultFromImportedBundle(bundle, filters);
 
-    const manifest = {
-      export_name: filename,
-      generated_at: result.summary.generatedAt,
-      model_version: MODEL_VERSION,
-      feature_pairing:
-        'Consumes the same operational demand signals exposed by the ARS Demand Export and publishes forecast, confidence, exception, backtest, and explanation outputs.',
-      files: {
-        'manifest.json': 1,
-        'forecast_output.csv': result.forecastOutput.length,
-        'forecast_accuracy_report.csv': result.accuracyReport.length,
-        'forecast_exceptions.csv': result.exceptions.length,
-        'forecast_confidence_scores.csv': result.confidenceScores.length,
-        'forecast_ai_explanations.csv': result.aiExplanations.length,
+    return this.buildPlannerPreview({
+      filters,
+      result,
+      plannerForecastRows: importedRows
+        .map((row) => ({
+          forecast_date: row.forecast_date,
+          demand_type: row.demand_type,
+          product_id: row.product_id,
+          product_name: row.product_name,
+          territory_id: row.territory_id,
+          warehouse_id: row.warehouse_id,
+          forecast_cases: row.forecast_cases,
+          confidence_score: row.confidence_score,
+          confidence_level: row.confidence_level,
+          avg_daily_cases_7d: row.avg_daily_cases_7d,
+          avg_daily_cases_28d: row.avg_daily_cases_28d,
+          promotion_flag: row.promotion_flag,
+        })),
+      inventoryRows: bundle.inventorySnapshots.map((snapshot) => ({
+        product_id: snapshot.product_id,
+        warehouse_id: snapshot.warehouse_id,
+        quantity_on_hand: snapshot.quantity_cases,
+      })),
+      products: bundle.products.map((product) => ({
+        value: product.product_id,
+        label: product.product_name,
+        sku: product.sku,
+      })),
+      sourceSummary: {
+        mode: 'imported_bundle',
+        label: 'Imported export bundle',
+        packageName: bundle.packageName,
+        note: 'Planner view reconstructed from the uploaded ARS demand export package, including packaged forecast rows and inventory snapshots.',
       },
-    };
+    });
+  }
 
-    const buffer = createZip([
-      { name: 'manifest.json', data: JSON.stringify(manifest, null, 2), modifiedAt },
-      { name: 'forecast_output.csv', data: toCsv(result.forecastOutput, this.forecastColumns()), modifiedAt },
-      { name: 'forecast_accuracy_report.csv', data: toCsv(result.accuracyReport, this.accuracyColumns()), modifiedAt },
-      { name: 'forecast_exceptions.csv', data: toCsv(result.exceptions, this.exceptionColumns()), modifiedAt },
-      { name: 'forecast_confidence_scores.csv', data: toCsv(result.confidenceScores, this.confidenceColumns()), modifiedAt },
-      { name: 'forecast_ai_explanations.csv', data: toCsv(result.aiExplanations, this.aiExplanationColumns()), modifiedAt },
-    ]);
-
+  async generateForecastReport(query: ForecastEngineQuery) {
+    const preview = await this.generateForecastPreview(query);
+    const filename = `ars_demand_forecast_planner_${preview.summary.generatedAt.slice(0, 10)}.pdf`;
+    const buffer = await this.createPlannerPdf(preview);
     return { filename, buffer };
+  }
+
+  async generateImportedForecastReport(buffer: Buffer, query: ForecastEngineQuery) {
+    const preview = await this.generateImportedForecastPreview(buffer, query);
+    const filename = `ars_demand_forecast_planner_${preview.summary.generatedAt.slice(0, 10)}.pdf`;
+    const pdfBuffer = await this.createPlannerPdf(preview);
+    return { filename, buffer: pdfBuffer };
   }
 
   private async buildForecastResult(query: ForecastEngineQuery): Promise<ForecastResult> {
@@ -358,8 +543,908 @@ export class ForecastEngineService {
     };
   }
 
+  private buildForecastResultFromImportedBundle(
+    bundle: ImportedForecastBundle,
+    filters: ForecastFilters,
+  ): ForecastResult {
+    const filteredRows = this.filterImportedPlannerRows(bundle.forecastRows, filters);
+    const inventoryRows = bundle.inventorySnapshots.map((snapshot) => ({
+      product_id: snapshot.product_id,
+      warehouse_id: snapshot.warehouse_id,
+      quantity_on_hand: snapshot.quantity_cases,
+    }));
+    const forecastOutput = filteredRows.map<ForecastOutputRow>((row) => ({
+      forecast_id: `${row.demand_type}|${row.product_id}|${row.warehouse_id ?? 'none'}|${row.forecast_date}`,
+      forecast_date: row.forecast_date,
+      demand_type: row.demand_type,
+      product_id: row.product_id,
+      product_name: row.product_name,
+      territory_id: row.territory_id,
+      warehouse_id: row.warehouse_id,
+      weighted_recent_demand_cases: this.roundNumber(row.avg_daily_cases_7d),
+      seasonal_pattern_adjustment_cases: this.roundNumber(
+        row.avg_daily_cases_7d - row.avg_daily_cases_28d,
+      ),
+      promotion_adjustment_cases: row.promotion_flag
+        ? this.roundNumber(row.forecast_cases * 0.1)
+        : 0,
+      stockout_adjustment_cases: 0,
+      visit_frequency_adjustment_cases: 0,
+      incident_or_disruption_adjustment_cases: 0,
+      forecast_cases: row.forecast_cases,
+      confidence_score: row.confidence_score,
+      confidence_level: row.confidence_level,
+      model_version: MODEL_VERSION,
+      explanation: this.buildImportedForecastExplanation(row),
+    }));
+    const confidenceScores = forecastOutput.map((row) => ({
+      forecast_id: row.forecast_id,
+      forecast_date: row.forecast_date,
+      demand_type: row.demand_type,
+      product_id: row.product_id,
+      product_name: row.product_name,
+      data_completeness_score: this.roundNumber(
+        Math.max(0.35, Math.min(1, row.weighted_recent_demand_cases / Math.max(1, row.forecast_cases))),
+      ),
+      visit_recency_score: row.confidence_score,
+      count_quality_score: row.confidence_score,
+      delivery_accuracy_score:
+        row.demand_type === 'REPLENISHMENT_DEMAND' ? 0.85 : 0.65,
+      uncertainty_penalty: this.roundNumber(Math.max(0, 1 - row.confidence_score)),
+      confidence_score: row.confidence_score,
+      confidence_level: row.confidence_level,
+    }));
+    const exceptions = this.buildImportedExceptions(forecastOutput, inventoryRows);
+    const averageConfidenceScore = this.average(
+      forecastOutput.map((row) => row.confidence_score),
+    );
+
+    return {
+      summary: {
+        generatedAt: bundle.generatedAt ?? filters.generatedAt.toISOString(),
+        forecastStartDate:
+          forecastOutput[0]?.forecast_date ?? this.dateKey(this.addDays(filters.toDate, 1)),
+        forecastEndDate:
+          forecastOutput[forecastOutput.length - 1]?.forecast_date ??
+          this.dateKey(this.addDays(filters.toDate, filters.forecastDays)),
+        historyStartDate: this.dateKey(filters.fromDate),
+        historyEndDate: this.dateKey(filters.toDate),
+        forecastRows: forecastOutput.length,
+        exceptions: exceptions.length,
+        aiSignals: 0,
+        averageConfidenceScore: this.roundNumber(averageConfidenceScore),
+        averageWape: null,
+        modelVersion: MODEL_VERSION,
+      },
+      forecastOutput,
+      accuracyReport: [],
+      exceptions,
+      confidenceScores,
+      aiExplanations: [],
+    };
+  }
+
+  private filterForecastResult(result: ForecastResult, filters: ForecastFilters) {
+    if (!filters.productId) {
+      return result;
+    }
+
+    const forecastOutput = result.forecastOutput.filter(
+      (row) => row.product_id === filters.productId,
+    );
+    const accuracyReport = result.accuracyReport.filter(
+      (row) => row.product_id === filters.productId,
+    );
+    const exceptions = result.exceptions.filter(
+      (row) => row.product_id === filters.productId,
+    );
+    const confidenceScores = result.confidenceScores.filter(
+      (row) => row.product_id === filters.productId,
+    );
+    const aiExplanations = result.aiExplanations.filter(
+      (row) => row.product_id === filters.productId || row.product_id === null,
+    );
+    const confidenceValues = forecastOutput
+      .map((row) => row.confidence_score)
+      .filter((value) => Number.isFinite(value));
+    const wapeValues = accuracyReport
+      .map((row) => row.wape)
+      .filter((value) => Number.isFinite(value));
+
+    return {
+      ...result,
+      summary: {
+        ...result.summary,
+        forecastRows: forecastOutput.length,
+        exceptions: exceptions.length,
+        aiSignals: aiExplanations.length,
+        averageConfidenceScore:
+          confidenceValues.length > 0
+            ? this.roundNumber(this.average(confidenceValues))
+            : 0,
+        averageWape:
+          wapeValues.length > 0 ? this.roundNumber(this.average(wapeValues)) : null,
+      },
+      forecastOutput,
+      accuracyReport,
+      exceptions,
+      confidenceScores,
+      aiExplanations,
+    };
+  }
+
+  private matchesPlannerRow(
+    row: { product_id: string },
+    filters: ForecastFilters,
+  ) {
+    if (filters.productId && row.product_id !== filters.productId) {
+      return false;
+    }
+    return true;
+  }
+
+  private filterImportedPlannerRows(
+    rows: ImportedPlannerForecastRow[],
+    filters: ForecastFilters,
+  ) {
+    if (rows.length === 0) {
+      return rows;
+    }
+
+    const sortedDates = [...new Set(rows.map((row) => row.forecast_date))].sort();
+    const firstForecastDate = sortedDates[0];
+    const horizonEndDate = this.dateKey(
+      this.addDays(this.parseDateOnly(firstForecastDate, 'forecastDate'), filters.forecastDays - 1),
+    );
+
+    return rows.filter(
+      (row) =>
+        this.matchesPlannerRow(row, filters) &&
+        row.forecast_date >= firstForecastDate &&
+        row.forecast_date <= horizonEndDate,
+    );
+  }
+
+  private buildPlannerPreview(params: {
+    filters: ForecastFilters;
+    result: ForecastResult;
+    plannerForecastRows: PlannerForecastRow[];
+    inventoryRows: PlannerInventoryRow[];
+    products: ForecastControlOption[];
+    sourceSummary: ForecastPreview['sourceSummary'];
+  }): ForecastPreview {
+    const products = [
+      { value: '', label: 'All products' },
+      ...params.products,
+    ].sort((left, right) => left.label.localeCompare(right.label));
+    const productionRecommendations = this.buildProductionRecommendations(
+      params.plannerForecastRows,
+      params.inventoryRows,
+      params.result,
+    );
+    const manufacturePlan = this.buildManufacturePlan(
+      params.plannerForecastRows,
+      productionRecommendations,
+    );
+    const plannerBrief = this.buildPlannerBrief(
+      productionRecommendations,
+      params.result,
+      params.sourceSummary,
+      params.filters,
+    );
+
+    return {
+      summary: {
+        ...params.result.summary,
+        planningWindow: params.filters.planningWindow,
+        selectedProductId: params.filters.productId,
+        sourceMode: params.sourceSummary.mode,
+      },
+      controls: {
+        planningWindows: PLANNING_WINDOWS.map((window) => ({
+          value: window.value,
+          label: window.label,
+          days: window.days,
+        })),
+        products,
+      },
+      sourceSummary: params.sourceSummary,
+      plannerBrief,
+      manufacturePlan,
+      productionRecommendations,
+      forecastOutput: params.result.forecastOutput.slice(0, 80),
+      accuracyReport: params.result.accuracyReport.slice(0, 40),
+      exceptions: params.result.exceptions.slice(0, 60),
+      confidenceScores: params.result.confidenceScores.slice(0, 80),
+      aiExplanations: params.result.aiExplanations.slice(0, 40),
+    };
+  }
+
+  private buildProductionRecommendations(
+    rows: PlannerForecastRow[],
+    inventoryRows: PlannerInventoryRow[],
+    result: ForecastResult,
+  ) {
+    const grouped = new Map<
+      string,
+      {
+        product_id: string;
+        product_name: string;
+        replenishment_forecast_cases: number;
+        retail_offtake_forecast_cases: number;
+        forecast_cases: number;
+        confidenceValues: number[];
+        weightedValues: number[];
+        avg7Values: number[];
+        avg28Values: number[];
+        promotionDays: number;
+        stockoutAdjustment: number;
+        incidentAdjustment: number;
+        visitPenalty: number;
+      }
+    >();
+    const byDate = new Map<string, { replenishment: number; retail: number }>();
+
+    for (const row of rows) {
+      const key = row.product_id;
+      const existing =
+        grouped.get(key) ??
+        {
+          product_id: row.product_id,
+          product_name: row.product_name,
+          replenishment_forecast_cases: 0,
+          retail_offtake_forecast_cases: 0,
+          forecast_cases: 0,
+          confidenceValues: [] as number[],
+          weightedValues: [] as number[],
+          avg7Values: [] as number[],
+          avg28Values: [] as number[],
+          promotionDays: 0,
+          stockoutAdjustment: 0,
+          incidentAdjustment: 0,
+          visitPenalty: 0,
+        };
+
+      if (row.demand_type === 'REPLENISHMENT_DEMAND') {
+        existing.replenishment_forecast_cases += row.forecast_cases;
+      } else {
+        existing.retail_offtake_forecast_cases += row.forecast_cases;
+      }
+      existing.confidenceValues.push(row.confidence_score);
+      if (row.weighted_recent_demand_cases !== undefined) {
+        existing.weightedValues.push(row.weighted_recent_demand_cases);
+      }
+      if (row.avg_daily_cases_7d !== undefined) {
+        existing.avg7Values.push(row.avg_daily_cases_7d);
+      }
+      if (row.avg_daily_cases_28d !== undefined) {
+        existing.avg28Values.push(row.avg_daily_cases_28d);
+      }
+      existing.promotionDays +=
+        row.promotion_flag || (row.promotion_adjustment_cases ?? 0) > 0
+          ? 1
+          : 0;
+      existing.stockoutAdjustment += row.stockout_adjustment_cases ?? 0;
+      existing.incidentAdjustment += row.incident_or_disruption_adjustment_cases ?? 0;
+      existing.visitPenalty += Math.abs(
+        Math.min(0, row.visit_frequency_adjustment_cases ?? 0),
+      );
+      grouped.set(key, existing);
+
+      const dateBucket =
+        byDate.get(row.forecast_date) ?? { replenishment: 0, retail: 0 };
+      if (row.demand_type === 'REPLENISHMENT_DEMAND') {
+        dateBucket.replenishment += row.forecast_cases;
+      } else {
+        dateBucket.retail += row.forecast_cases;
+      }
+      byDate.set(row.forecast_date, dateBucket);
+    }
+
+    const horizonDays = Math.max(1, new Set(rows.map((row) => row.forecast_date)).size);
+    const inventoryByProduct = new Map<string, number>();
+    for (const inventoryRow of inventoryRows) {
+      inventoryByProduct.set(
+        inventoryRow.product_id,
+        (inventoryByProduct.get(inventoryRow.product_id) ?? 0) +
+          inventoryRow.quantity_on_hand,
+      );
+    }
+
+    const recommendations = [...grouped.values()]
+      .map<PlannerRecommendation>((group) => {
+        const currentStockCases = this.roundNumber(
+          inventoryByProduct.get(group.product_id) ?? 0,
+        );
+        const plannerForecastCases = this.roundNumber(
+          Math.max(
+            group.replenishment_forecast_cases,
+            group.retail_offtake_forecast_cases,
+          ),
+        );
+        const averageConfidenceScore = this.roundNumber(
+          this.average(group.confidenceValues),
+        );
+        const baseRunRate =
+          group.avg28Values.length > 0
+            ? this.average(group.avg28Values)
+            : group.weightedValues.length > 0
+              ? this.average(group.weightedValues)
+              : plannerForecastCases / horizonDays;
+        const recentRunRate =
+          group.avg7Values.length > 0
+            ? this.average(group.avg7Values)
+            : plannerForecastCases / horizonDays;
+        const recentTrendRatio =
+          baseRunRate > 0
+            ? this.roundNumber((recentRunRate - baseRunRate) / baseRunRate)
+            : recentRunRate > 0
+              ? 1
+              : 0;
+        const safetyStockCases = this.roundNumber(
+          Math.max(plannerForecastCases / Math.max(1, horizonDays) * 7, plannerForecastCases * 0.15),
+        );
+        const requiredCases = this.roundNumber(plannerForecastCases + safetyStockCases);
+        const recommendedProductionCases = this.roundNumber(
+          Math.max(0, requiredCases - currentStockCases),
+        );
+        const suggestedDailyManufactureCases = this.roundNumber(
+          recommendedProductionCases / horizonDays,
+        );
+        const projectedDailyDemand = plannerForecastCases / horizonDays;
+        const stockCoverDays =
+          projectedDailyDemand > 0 ? currentStockCases / projectedDailyDemand : 999;
+        const demandRising = recentTrendRatio >= 0.12;
+        const demandSoftening = recentTrendRatio <= -0.1;
+        const needsIncrease =
+          recommendedProductionCases > plannerForecastCases * 0.25 || stockCoverDays < 7;
+        const hasExcessStock =
+          currentStockCases > requiredCases * 1.35 || stockCoverDays > horizonDays * 1.25;
+        const action: PlannerRecommendation['action'] = needsIncrease
+          ? 'INCREASE'
+          : hasExcessStock && demandSoftening
+            ? 'DECREASE'
+            : 'HOLD';
+        const urgency: PlannerRecommendation['urgency'] =
+          action === 'INCREASE' && (stockCoverDays < 5 || recommendedProductionCases > plannerForecastCases * 0.5)
+            ? 'HIGH'
+            : action === 'INCREASE' || (action === 'HOLD' && averageConfidenceScore < 0.65)
+              ? 'MEDIUM'
+              : 'LOW';
+        const reasons: string[] = [];
+
+        if (demandRising) {
+          reasons.push('Recent run rate is above the longer baseline, so demand is accelerating.');
+        }
+        if (demandSoftening) {
+          reasons.push('Recent run rate is below the longer baseline, so demand is cooling.');
+        }
+        if (group.promotionDays > 0) {
+          reasons.push('Promotion-linked uplift is present in the selected manufacturing horizon.');
+        }
+        if (group.stockoutAdjustment > 0) {
+          reasons.push('Hidden demand from stockouts is lifting the required production signal.');
+        }
+        if (group.incidentAdjustment > 0) {
+          reasons.push('Field disruptions are influencing the demand pattern and need closer watch.');
+        }
+        if (group.visitPenalty > 0) {
+          reasons.push('Sparse visit cadence is reducing signal stability, so final quantities need planner review.');
+        }
+        if (stockCoverDays < 7) {
+          reasons.push('Current stock cover is under one week of projected demand.');
+        }
+        if (hasExcessStock) {
+          reasons.push('Available stock already covers the horizon with buffer, so manufacturing can be slowed.');
+        }
+        if (averageConfidenceScore < 0.65) {
+          reasons.push('Signal quality is moderate, so quantities should be approved with local business context.');
+        }
+        if (reasons.length === 0) {
+          reasons.push('Demand and stock are broadly balanced across the selected horizon.');
+        }
+
+        const reasonSummary =
+          action === 'INCREASE'
+            ? `Increase output to close an estimated ${formatCases(recommendedProductionCases)} case gap against projected demand and safety stock.`
+            : action === 'DECREASE'
+              ? 'Slow output because inventory already covers the current demand picture with buffer.'
+              : 'Hold output near the current pace while monitoring local demand changes and stock cover.';
+
+        return {
+          recommendation_id: `${group.product_id}|${action}`,
+          product_id: group.product_id,
+          product_name: group.product_name,
+          forecast_cases: plannerForecastCases,
+          replenishment_forecast_cases: this.roundNumber(
+            group.replenishment_forecast_cases,
+          ),
+          retail_offtake_forecast_cases: this.roundNumber(
+            group.retail_offtake_forecast_cases,
+          ),
+          current_stock_cases: currentStockCases,
+          safety_stock_cases: safetyStockCases,
+          required_cases: requiredCases,
+          recommended_production_cases: recommendedProductionCases,
+          suggested_daily_manufacture_cases: suggestedDailyManufactureCases,
+          average_confidence_score: averageConfidenceScore,
+          action,
+          urgency,
+          reason_summary: reasonSummary,
+          reasons,
+          horizon_start: result.summary.forecastStartDate,
+          horizon_end: result.summary.forecastEndDate,
+        };
+      })
+      .sort((left, right) => {
+        const urgencyRank = { HIGH: 3, MEDIUM: 2, LOW: 1 };
+        const actionRank = { INCREASE: 3, HOLD: 2, DECREASE: 1 };
+        return (
+          urgencyRank[right.urgency] - urgencyRank[left.urgency] ||
+          actionRank[right.action] - actionRank[left.action] ||
+          right.recommended_production_cases - left.recommended_production_cases
+        );
+      });
+
+    return recommendations.slice(0, 16);
+  }
+
+  private buildManufacturePlan(
+    rows: PlannerForecastRow[],
+    recommendations: PlannerRecommendation[],
+  ) {
+    const recommendationByProduct = new Map(
+      recommendations.map((recommendation) => [recommendation.product_id, recommendation]),
+    );
+    const grouped = new Map<
+      string,
+      {
+        total_forecast_cases: number;
+        replenishment_forecast_cases: number;
+        retail_offtake_forecast_cases: number;
+        recommended_manufacture_cases: number;
+      }
+    >();
+    for (const row of rows) {
+      const existing =
+        grouped.get(row.forecast_date) ??
+        {
+          total_forecast_cases: 0,
+          replenishment_forecast_cases: 0,
+          retail_offtake_forecast_cases: 0,
+          recommended_manufacture_cases: 0,
+        };
+
+      if (row.demand_type === 'REPLENISHMENT_DEMAND') {
+        existing.replenishment_forecast_cases += row.forecast_cases;
+      } else {
+        existing.retail_offtake_forecast_cases += row.forecast_cases;
+      }
+
+      const recommendation = recommendationByProduct.get(row.product_id);
+      existing.recommended_manufacture_cases +=
+        (recommendation?.suggested_daily_manufacture_cases ?? 0);
+      grouped.set(row.forecast_date, existing);
+    }
+
+    return [...grouped.entries()]
+      .map(([date, value]) => ({
+        date,
+        total_forecast_cases: this.roundNumber(
+          Math.max(
+            value.replenishment_forecast_cases,
+            value.retail_offtake_forecast_cases,
+          ),
+        ),
+        replenishment_forecast_cases: this.roundNumber(
+          value.replenishment_forecast_cases,
+        ),
+        retail_offtake_forecast_cases: this.roundNumber(
+          value.retail_offtake_forecast_cases,
+        ),
+        recommended_manufacture_cases: this.roundNumber(
+          value.recommended_manufacture_cases,
+        ),
+      }))
+      .sort((left, right) => left.date.localeCompare(right.date));
+  }
+
+  private buildPlannerBrief(
+    recommendations: PlannerRecommendation[],
+    result: ForecastResult,
+    sourceSummary: ForecastPreview['sourceSummary'],
+    filters: ForecastFilters,
+  ): PlannerBrief {
+    const increaseCount = recommendations.filter(
+      (recommendation) => recommendation.action === 'INCREASE',
+    ).length;
+    const decreaseCount = recommendations.filter(
+      (recommendation) => recommendation.action === 'DECREASE',
+    ).length;
+    const holdCount = recommendations.filter(
+      (recommendation) => recommendation.action === 'HOLD',
+    ).length;
+    const topIncrease = recommendations.find(
+      (recommendation) => recommendation.action === 'INCREASE',
+    );
+    const cautionCount = recommendations.filter(
+      (recommendation) =>
+        recommendation.urgency !== 'LOW' ||
+        recommendation.average_confidence_score < 0.65,
+    ).length;
+    const confidenceText =
+      result.summary.averageConfidenceScore >= 0.8
+        ? 'strong enough for quantity-led planning'
+        : result.summary.averageConfidenceScore >= 0.6
+          ? 'best read as directional planning with planner review'
+          : 'too soft for hands-off manufacturing commitments';
+
+    return {
+      title: `Manufacturing outlook for ${PLANNING_WINDOWS.find((window) => window.value === filters.planningWindow)?.label ?? 'the selected horizon'}`,
+      headline:
+        increaseCount > 0
+          ? `Increase output on ${increaseCount} product${increaseCount === 1 ? '' : 's'} and review ${cautionCount} signal-sensitive recommendation${cautionCount === 1 ? '' : 's'}.`
+          : decreaseCount > 0
+            ? `Slow output on ${decreaseCount} product${decreaseCount === 1 ? '' : 's'} because stock already covers the current demand picture.`
+            : `Hold the current manufacturing pace across ${holdCount} product${holdCount === 1 ? '' : 's'} while monitoring local shifts.`,
+      executiveSummary:
+        topIncrease
+          ? `${topIncrease.product_name} shows the clearest production gap, with about ${formatCases(topIncrease.recommended_production_cases)} cases to build across the horizon. Overall forecast quality is ${confidenceText}.`
+          : `No product is showing an immediate build gap large enough to force a manufacturing increase. Overall forecast quality is ${confidenceText}.`,
+      topics: [
+        {
+          title: 'What the forecast is saying',
+          detail: `The planner horizon runs from ${result.summary.forecastStartDate} to ${result.summary.forecastEndDate}. Forecast rows describe future demand by product, demand type, territory, and warehouse.`,
+        },
+        {
+          title: 'Manufacturing posture',
+          detail:
+            increaseCount > 0
+              ? `The current view supports increasing production where forecast demand plus safety stock is above current stock cover. Recommendations are quantity-led, not just confidence-led.`
+              : `The current view supports holding or slowing production because stock cover is not materially below the projected horizon demand.`,
+        },
+        {
+          title: 'Planner caution',
+          detail:
+            result.summary.averageWape !== null
+              ? `Recent backtest WAPE is ${Math.round(result.summary.averageWape * 100)}%, and there are ${result.summary.exceptions} active exception rows. Use the recommendation list as a decision aid, then confirm with local context.`
+              : `${sourceSummary.label} does not include a packaged backtest report, so this run leans on forecast rows, confidence, and inventory only.`,
+        },
+      ],
+    };
+  }
+
+  private buildImportedExceptions(
+    forecasts: ForecastOutputRow[],
+    inventoryRows: PlannerInventoryRow[],
+  ) {
+    const inventoryByProductWarehouse = new Map(
+      inventoryRows.map((row) => [
+        `${row.product_id}|${row.warehouse_id ?? 'none'}`,
+        row.quantity_on_hand,
+      ]),
+    );
+    const exceptions: ExceptionRow[] = [];
+
+    for (const forecast of forecasts) {
+      if (forecast.confidence_score < 0.5) {
+        exceptions.push(
+          this.exceptionForForecast(
+            forecast,
+            'HIGH',
+            'LOW_CONFIDENCE',
+            'Imported package forecast confidence is below the planner review threshold.',
+            'Treat this row as directional only and confirm with local demand knowledge before committing production.',
+          ),
+        );
+      } else if (forecast.confidence_score < 0.65) {
+        exceptions.push(
+          this.exceptionForForecast(
+            forecast,
+            'MEDIUM',
+            'DIRECTIONAL_FORECAST_ONLY',
+            'Imported package forecast is directionally useful but not yet stable enough for automatic quantity decisions.',
+            'Use the recommendation as a starting point and validate with stock cover and local demand context.',
+          ),
+        );
+      }
+
+      const inventory = inventoryByProductWarehouse.get(
+        `${forecast.product_id}|${forecast.warehouse_id ?? 'none'}`,
+      );
+      if (inventory !== undefined && forecast.forecast_cases > inventory) {
+        exceptions.push(
+          this.exceptionForForecast(
+            forecast,
+            'MEDIUM',
+            'WAREHOUSE_STOCK_RISK',
+            'Imported warehouse stock is below the forecasted cases for this row.',
+            'Check whether manufacturing or transfer capacity is needed before the forecast date arrives.',
+          ),
+        );
+      }
+    }
+
+    return exceptions.slice(0, 500);
+  }
+
+  private buildImportedForecastExplanation(row: ImportedPlannerForecastRow) {
+    const demandLabel =
+      row.demand_type === 'REPLENISHMENT_DEMAND'
+        ? 'replenishment demand'
+        : 'estimated retail offtake';
+    const trendText =
+      row.avg_daily_cases_7d > row.avg_daily_cases_28d
+        ? 'recent demand is running above the 28-day baseline'
+        : row.avg_daily_cases_7d < row.avg_daily_cases_28d
+          ? 'recent demand is running below the 28-day baseline'
+          : 'recent demand is broadly aligned with the 28-day baseline';
+    const promotionText = row.promotion_flag
+      ? ' A promotion flag is active in the packaged forecast horizon.'
+      : '';
+    return `${this.roundNumber(row.forecast_cases)} cases forecast for ${demandLabel}; ${trendText}.${promotionText}`;
+  }
+
+  private async createPlannerPdf(preview: ForecastPreview) {
+    const document = new PDFDocument({
+      size: 'A4',
+      margin: 42,
+      info: {
+        Title: preview.plannerBrief.title,
+        Author: 'Nestle Insight Demand Planner Portal',
+      },
+    });
+    const chunks: Buffer[] = [];
+    document.on('data', (chunk: Buffer) => chunks.push(chunk));
+
+    const pageWidth = document.page.width - document.page.margins.left - document.page.margins.right;
+    const drawMetric = (
+      x: number,
+      y: number,
+      width: number,
+      label: string,
+      value: string,
+    ) => {
+      document
+        .roundedRect(x, y, width, 58, 10)
+        .fillAndStroke('#f8fbf5', '#d7e4d2');
+      document
+        .fillColor('#5b6b54')
+        .fontSize(9)
+        .text(label, x + 10, y + 10, { width: width - 20 });
+      document
+        .fillColor('#2f3b2c')
+        .fontSize(16)
+        .text(value, x + 10, y + 26, { width: width - 20 });
+    };
+
+    document
+      .fillColor('#6f8566')
+      .fontSize(11)
+      .text('ARS DEMAND FORECAST PLANNER REPORT');
+    document
+      .moveDown(0.4)
+      .fillColor('#243022')
+      .fontSize(24)
+      .text(preview.plannerBrief.title, { width: pageWidth });
+    document
+      .moveDown(0.4)
+      .fillColor('#51604d')
+      .fontSize(11)
+      .text(
+        `${preview.sourceSummary.label} | Generated ${preview.summary.generatedAt.slice(0, 10)} | Forecast horizon ${preview.summary.forecastStartDate} to ${preview.summary.forecastEndDate}`,
+        { width: pageWidth },
+      );
+
+    document.moveDown(0.8);
+    document
+      .roundedRect(document.x, document.y, pageWidth, 58, 12)
+      .fillAndStroke('#eef6f2', '#d6e4de');
+    document
+      .fillColor('#2f3b2c')
+      .fontSize(15)
+      .text(preview.plannerBrief.headline, document.x + 14, document.y + 12, {
+        width: pageWidth - 28,
+      });
+    document
+      .fillColor('#5d6d60')
+      .fontSize(10)
+      .text(preview.plannerBrief.executiveSummary, document.x + 14, document.y + 32, {
+        width: pageWidth - 28,
+      });
+
+    document.moveDown(2.2);
+    const metricY = document.y;
+    const metricWidth = (pageWidth - 24) / 4;
+    drawMetric(
+      document.x,
+      metricY,
+      metricWidth,
+      'Forecast rows',
+      formatCases(preview.summary.forecastRows),
+    );
+    drawMetric(
+      document.x + metricWidth + 8,
+      metricY,
+      metricWidth,
+      'Avg confidence',
+      `${Math.round(preview.summary.averageConfidenceScore * 100)}%`,
+    );
+    drawMetric(
+      document.x + (metricWidth + 8) * 2,
+      metricY,
+      metricWidth,
+      'Exceptions',
+      formatCases(preview.summary.exceptions),
+    );
+    drawMetric(
+      document.x + (metricWidth + 8) * 3,
+      metricY,
+      metricWidth,
+      'AI signals',
+      formatCases(preview.summary.aiSignals),
+    );
+    document.y = metricY + 74;
+
+    document
+      .fillColor('#243022')
+      .fontSize(14)
+      .text('Planner topics', { width: pageWidth });
+    document.moveDown(0.4);
+    for (const topic of preview.plannerBrief.topics) {
+      document
+        .fillColor('#243022')
+        .fontSize(11)
+        .text(topic.title, { continued: false });
+      document
+        .fillColor('#5d6d60')
+        .fontSize(10)
+        .text(topic.detail, { width: pageWidth });
+      document.moveDown(0.35);
+    }
+
+    document.moveDown(0.5);
+    this.drawForecastLineChart(document, preview.manufacturePlan, pageWidth);
+
+    document.moveDown(0.8);
+    document
+      .fillColor('#243022')
+      .fontSize(14)
+      .text('Recommended manufacturing actions', { width: pageWidth });
+    document.moveDown(0.4);
+
+    for (const recommendation of preview.productionRecommendations.slice(0, 8)) {
+      if (document.y > 690) {
+        document.addPage();
+      }
+      document
+        .roundedRect(document.x, document.y, pageWidth, 74, 10)
+        .fillAndStroke('#fffaf4', '#eadfd3');
+      document
+        .fillColor('#243022')
+        .fontSize(11)
+        .text(
+          `${recommendation.product_name} | ${recommendation.action} | ${recommendation.urgency}`,
+          document.x + 12,
+          document.y + 10,
+          { width: pageWidth - 24 },
+        );
+      document
+        .fillColor('#5d6d60')
+        .fontSize(10)
+        .text(recommendation.reason_summary, document.x + 12, document.y + 28, {
+          width: pageWidth - 24,
+        });
+      document
+        .fillColor('#243022')
+        .fontSize(9)
+        .text(
+          `Forecast ${formatCases(recommendation.forecast_cases)} cases | Stock ${formatCases(recommendation.current_stock_cases)} | Build ${formatCases(recommendation.recommended_production_cases)} | Daily rate ${formatCases(recommendation.suggested_daily_manufacture_cases)}`,
+          document.x + 12,
+          document.y + 50,
+          { width: pageWidth - 24 },
+        );
+      document.y += 84;
+    }
+
+    if (preview.exceptions.length > 0) {
+      document.moveDown(0.4);
+      document
+        .fillColor('#243022')
+        .fontSize(14)
+        .text('Key exception watchlist', { width: pageWidth });
+      document.moveDown(0.4);
+      for (const row of preview.exceptions.slice(0, 6)) {
+        document
+          .fillColor('#7e6140')
+          .fontSize(10)
+          .text(`${row.exception_type}: ${row.reason}`, { width: pageWidth });
+        document.moveDown(0.2);
+      }
+    }
+
+    document.end();
+
+    return await new Promise<Buffer>((resolve) => {
+      document.on('end', () => resolve(Buffer.concat(chunks)));
+    });
+  }
+
+  private drawForecastLineChart(
+    document: any,
+    plan: ManufacturePlanPoint[],
+    width: number,
+  ) {
+    const chartHeight = 170;
+    const chartWidth = width;
+    const left = document.x;
+    const top = document.y;
+    const values = plan.flatMap((point) => [
+      point.total_forecast_cases,
+      point.recommended_manufacture_cases,
+    ]);
+    const maxValue = Math.max(1, ...values);
+
+    document
+      .fillColor('#243022')
+      .fontSize(14)
+      .text('Future manufacturing line', left, top, { width: chartWidth });
+    document
+      .fillColor('#5d6d60')
+      .fontSize(10)
+      .text(
+        'Forecast demand is shown against the suggested daily manufacturing pace for the selected horizon.',
+        left,
+        top + 18,
+        { width: chartWidth },
+      );
+
+    const plotTop = top + 48;
+    const plotHeight = chartHeight - 36;
+    const plotBottom = plotTop + plotHeight;
+    const pointSpacing =
+      plan.length > 1 ? (chartWidth - 30) / Math.max(1, plan.length - 1) : 0;
+
+    document.lineWidth(1).strokeColor('#d7e4d2');
+    for (let index = 0; index < 4; index += 1) {
+      const y = plotTop + (plotHeight / 3) * index;
+      document.moveTo(left, y).lineTo(left + chartWidth, y).stroke();
+    }
+
+    const drawSeries = (color: string, extractor: (point: ManufacturePlanPoint) => number) => {
+      document.strokeColor(color).lineWidth(2);
+      plan.forEach((point, index) => {
+        const value = extractor(point);
+        const x = left + 15 + pointSpacing * index;
+        const y = plotBottom - (value / maxValue) * plotHeight;
+        if (index === 0) {
+          document.moveTo(x, y);
+        } else {
+          document.lineTo(x, y);
+        }
+      });
+      if (plan.length > 0) {
+        document.stroke();
+      }
+    };
+
+    drawSeries('#54715a', (point) => point.total_forecast_cases);
+    drawSeries('#b6793f', (point) => point.recommended_manufacture_cases);
+
+    document.fillColor('#54715a').fontSize(9).text('Forecast demand', left, plotBottom + 10);
+    document.fillColor('#b6793f').fontSize(9).text('Suggested manufacture', left + 100, plotBottom + 10);
+    document.y = plotBottom + 28;
+  }
+
   private normalizeFilters(query: ForecastEngineQuery): ForecastFilters {
     const generatedAt = new Date();
+    const requestedPlanningWindow =
+      query.planningWindow?.trim().toLowerCase() ?? 'next_month';
+    const planningWindow =
+      PLANNING_WINDOWS.find((window) => window.value === requestedPlanningWindow)
+        ?.value ?? 'next_month';
+    const defaultForecastDays =
+      PLANNING_WINDOWS.find((window) => window.value === planningWindow)?.days ?? 30;
     const toDate = query.toDate?.trim()
       ? this.parseDateOnly(query.toDate.trim(), 'toDate')
       : this.parseDateOnly(this.dateKey(generatedAt), 'toDate');
@@ -373,9 +1458,9 @@ export class ForecastEngineService {
 
     const forecastDays = this.parseBoundedInteger(
       query.forecastDays,
-      30,
+      defaultForecastDays,
       1,
-      180,
+      365,
       'forecastDays',
     );
     const backtestDays = this.parseBoundedInteger(
@@ -391,6 +1476,8 @@ export class ForecastEngineService {
       toDate,
       forecastDays,
       backtestDays,
+      productId: query.productId?.trim() || null,
+      planningWindow,
       generatedAt,
       exportDateKey: this.dateKey(generatedAt),
     };

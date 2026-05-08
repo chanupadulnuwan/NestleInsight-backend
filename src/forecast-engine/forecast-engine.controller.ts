@@ -1,5 +1,17 @@
-import { Controller, Get, Query, Res, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Post,
+  Query,
+  Res,
+  UploadedFile,
+  UseGuards,
+  UseInterceptors,
+} from '@nestjs/common';
 import type { Response } from 'express';
+import { FileInterceptor } from '@nestjs/platform-express';
 
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -19,12 +31,16 @@ export class ForecastEngineController {
     @Query('toDate') toDate: string | undefined,
     @Query('forecastDays') forecastDays: string | undefined,
     @Query('backtestDays') backtestDays: string | undefined,
+    @Query('productId') productId: string | undefined,
+    @Query('planningWindow') planningWindow: string | undefined,
   ) {
     return this.forecastEngineService.generateForecastPreview({
       fromDate,
       toDate,
       forecastDays,
       backtestDays,
+      productId,
+      planningWindow,
     });
   }
 
@@ -34,6 +50,8 @@ export class ForecastEngineController {
     @Query('toDate') toDate: string | undefined,
     @Query('forecastDays') forecastDays: string | undefined,
     @Query('backtestDays') backtestDays: string | undefined,
+    @Query('productId') productId: string | undefined,
+    @Query('planningWindow') planningWindow: string | undefined,
     @Res() res: Response,
   ) {
     const report = await this.forecastEngineService.generateForecastReport({
@@ -41,9 +59,76 @@ export class ForecastEngineController {
       toDate,
       forecastDays,
       backtestDays,
+      productId,
+      planningWindow,
     });
 
-    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${report.filename}"`,
+    );
+    res.setHeader('Content-Length', report.buffer.length);
+    res.send(report.buffer);
+  }
+
+  @Post('ars-demand/import-preview')
+  @UseInterceptors(FileInterceptor('bundle'))
+  previewImportedArsDemandForecast(
+    @UploadedFile() bundle: Express.Multer.File,
+    @Body('fromDate') fromDate: string | undefined,
+    @Body('toDate') toDate: string | undefined,
+    @Body('forecastDays') forecastDays: string | undefined,
+    @Body('backtestDays') backtestDays: string | undefined,
+    @Body('productId') productId: string | undefined,
+    @Body('planningWindow') planningWindow: string | undefined,
+  ) {
+    if (!bundle?.buffer) {
+      throw new BadRequestException('An export ZIP bundle is required.');
+    }
+
+    return this.forecastEngineService.generateImportedForecastPreview(
+      bundle.buffer,
+      {
+        fromDate,
+        toDate,
+        forecastDays,
+        backtestDays,
+        productId,
+        planningWindow,
+      },
+    );
+  }
+
+  @Post('ars-demand/import-report')
+  @UseInterceptors(FileInterceptor('bundle'))
+  async downloadImportedArsDemandForecastReport(
+    @UploadedFile() bundle: Express.Multer.File,
+    @Body('fromDate') fromDate: string | undefined,
+    @Body('toDate') toDate: string | undefined,
+    @Body('forecastDays') forecastDays: string | undefined,
+    @Body('backtestDays') backtestDays: string | undefined,
+    @Body('productId') productId: string | undefined,
+    @Body('planningWindow') planningWindow: string | undefined,
+    @Res() res: Response,
+  ) {
+    if (!bundle?.buffer) {
+      throw new BadRequestException('An export ZIP bundle is required.');
+    }
+
+    const report = await this.forecastEngineService.generateImportedForecastReport(
+      bundle.buffer,
+      {
+        fromDate,
+        toDate,
+        forecastDays,
+        backtestDays,
+        productId,
+        planningWindow,
+      },
+    );
+
+    res.setHeader('Content-Type', 'application/pdf');
     res.setHeader(
       'Content-Disposition',
       `attachment; filename="${report.filename}"`,
