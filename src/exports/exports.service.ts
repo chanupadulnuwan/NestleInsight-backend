@@ -6,6 +6,7 @@ import { ActivityLog } from '../activity/entities/activity.entity';
 import { AccountStatus } from '../common/enums/account-status.enum';
 import { ApprovalStatus } from '../common/enums/approval-status.enum';
 import { Role } from '../common/enums/role.enum';
+import { DailyReport } from '../daily-reports/entities/daily-report.entity';
 import { DeliveryAssignmentOrder } from '../delivery-assignments/entities/delivery-assignment-order.entity';
 import { DeliveryAssignment } from '../delivery-assignments/entities/delivery-assignment.entity';
 import { OrderReturn } from '../delivery-assignments/entities/order-return.entity';
@@ -206,9 +207,39 @@ type VisitSummaryRow = {
   has_pending_delivery: boolean;
   planogram_ok: boolean | null;
   posm_ok: boolean | null;
+  planogram_violation_label: string;
+  posm_violation_label: string;
+  competitor_notes: string;
+  outlet_feedback: string;
+  outlet_feedback_answers_json: string;
+  promotions_json: string;
+  osa_issue_count: number;
   photo_count: number;
   created_at: string;
   updated_at: string;
+};
+
+type FieldObservationRow = {
+  observation_id: string;
+  source_type: string;
+  source_id: string;
+  signal_date: string;
+  canonical_shop_id: string | null;
+  sales_rep_id: string | null;
+  territory_id: string | null;
+  warehouse_id: string | null;
+  route_id: string | null;
+  product_id: string | null;
+  product_name: string | null;
+  issue_tag: string;
+  issue_type: string;
+  severity_hint: string;
+  observation_text: string;
+  promotion_related: boolean;
+  competitor_related: boolean;
+  osa_related: boolean;
+  planogram_violation: boolean;
+  posm_violation: boolean;
 };
 
 type InventorySnapshotRow = {
@@ -320,6 +351,8 @@ export class ExportsService {
   constructor(
     @InjectRepository(ActivityLog)
     private readonly activityLogsRepo: Repository<ActivityLog>,
+    @InjectRepository(DailyReport)
+    private readonly dailyReportsRepo: Repository<DailyReport>,
     @InjectRepository(DeliveryAssignment)
     private readonly assignmentsRepo: Repository<DeliveryAssignment>,
     @InjectRepository(DeliveryAssignmentOrder)
@@ -372,6 +405,7 @@ export class ExportsService {
       promotionProducts,
       promotionTerritories,
       warehouseInventory,
+      dailyReports,
       activityLogs,
     ] = await Promise.all([
       this.productsRepo.find({ order: { productName: 'ASC' } }),
@@ -438,6 +472,10 @@ export class ExportsService {
       this.warehouseInventoryRepo.find({
         relations: { warehouse: true, product: true },
         order: { updatedAt: 'ASC' },
+      }),
+      this.dailyReportsRepo.find({
+        relations: { route: true, salesRep: true },
+        order: { reportDate: 'ASC' },
       }),
       this.activityLogsRepo.find({ order: { createdAt: 'ASC' } }),
     ]);
@@ -734,6 +772,7 @@ export class ExportsService {
     const stockoutEvents: StockoutEventRow[] = [];
     const damageExpiredRows: DamageExpiredRow[] = [];
     const inventorySnapshots: InventorySnapshotRow[] = [];
+    const fieldObservations: FieldObservationRow[] = [];
 
     const canonicalShopByVisitShopId = new Map<string, string>();
 
@@ -769,11 +808,33 @@ export class ExportsService {
           has_pending_delivery: visit.hasPendingDelivery,
           planogram_ok: visit.planogramOk,
           posm_ok: visit.posmOk,
+          planogram_violation_label:
+            visit.planogramOk === false ? 'Planogram not followed' : '',
+          posm_violation_label:
+            visit.posmOk === false ? 'POSM missing or not compliant' : '',
+          competitor_notes: visit.competitorNotes?.trim() ?? '',
+          outlet_feedback: visit.outletFeedback?.trim() ?? '',
+          outlet_feedback_answers_json: this.serializeJsonValue(
+            visit.outletFeedbackAnswersJson,
+          ),
+          promotions_json: this.serializeJsonValue(visit.promotionsJson),
+          osa_issue_count: Array.isArray(visit.osaIssuesJson)
+            ? visit.osaIssuesJson.length
+            : 0,
           photo_count: visit.photoUrls?.length ?? 0,
           created_at: visit.createdAt.toISOString(),
           updated_at: visit.updatedAt.toISOString(),
         });
       }
+
+      fieldObservations.push(
+        ...this.buildFieldObservationRowsFromVisit(
+          visit,
+          canonicalShopId,
+          observedAtIso,
+          observedDate,
+        ),
+      );
 
       const stockItems = Array.isArray(visit.shelfStockJson)
         ? visit.shelfStockJson
@@ -942,6 +1003,12 @@ export class ExportsService {
     const filteredInventorySnapshots = inventorySnapshots.filter((row) =>
       this.isInRange(row.snapshot_at, filters),
     );
+    const filteredFieldObservations = [
+      ...fieldObservations,
+      ...dailyReports.flatMap((report) =>
+        this.buildFieldObservationRowsFromDailyReport(report),
+      ),
+    ].filter((row) => this.isInRange(row.signal_date, filters));
 
     const normalizedStockCounts = this.normalizeDuplicateStockCounts(
       osaStockCounts,
@@ -1177,6 +1244,7 @@ export class ExportsService {
         'returns.csv': returnRows.length,
         'return_items.csv': returnItemRows.length,
         'sales_rep_visits.csv': visitRows.length,
+        'field_observations.csv': filteredFieldObservations.length,
         'osa_stock_counts.csv': filteredOsaStockCounts.length,
         'stockout_events.csv': filteredStockoutEvents.length,
         'damaged_expired_counts.csv': filteredDamageExpiredRows.length,
@@ -1229,6 +1297,7 @@ export class ExportsService {
       { name: 'returns.csv', data: toCsv(returnRows, this.returnColumns()), modifiedAt },
       { name: 'return_items.csv', data: toCsv(returnItemRows, this.returnItemColumns()), modifiedAt },
       { name: 'sales_rep_visits.csv', data: toCsv(visitRows, this.visitColumns()), modifiedAt },
+      { name: 'field_observations.csv', data: toCsv(filteredFieldObservations, this.fieldObservationColumns()), modifiedAt },
       { name: 'osa_stock_counts.csv', data: toCsv(filteredOsaStockCounts, this.osaColumns()), modifiedAt },
       { name: 'stockout_events.csv', data: toCsv(filteredStockoutEvents, this.stockoutColumns()), modifiedAt },
       { name: 'damaged_expired_counts.csv', data: toCsv(filteredDamageExpiredRows, this.damageColumns()), modifiedAt },
@@ -1245,6 +1314,308 @@ export class ExportsService {
       filename: `ars_demand_forecast_export_${exportDate}.zip`,
       buffer: zipBuffer,
     };
+  }
+
+  private buildFieldObservationRowsFromVisit(
+    visit: StoreVisit,
+    canonicalShopId: string,
+    observedAtIso: string,
+    observedDate: string,
+  ) {
+    const warehouseId = visit.route?.warehouseId ?? null;
+    const rows: FieldObservationRow[] = [];
+    const pushRow = (
+      sourceType: string,
+      sourceId: string,
+      observationText: string,
+      options?: {
+        issueTag?: string;
+        issueType?: string;
+        severityHint?: string;
+        productId?: string | null;
+        productName?: string | null;
+        promotionRelated?: boolean;
+        competitorRelated?: boolean;
+        osaRelated?: boolean;
+        planogramViolation?: boolean;
+        posmViolation?: boolean;
+      },
+    ) => {
+      const normalizedText = observationText.trim();
+      if (!normalizedText) {
+        return;
+      }
+
+      rows.push({
+        observation_id: `${sourceType}:${sourceId}`,
+        source_type: sourceType,
+        source_id: sourceId,
+        signal_date: observedDate,
+        canonical_shop_id: canonicalShopId,
+        sales_rep_id: visit.salesRepId,
+        territory_id: visit.territoryId,
+        warehouse_id: warehouseId,
+        route_id: visit.routeId,
+        product_id: options?.productId ?? null,
+        product_name: options?.productName ?? null,
+        issue_tag: options?.issueTag ?? '',
+        issue_type: options?.issueType ?? '',
+        severity_hint:
+          options?.severityHint ??
+          this.inferFieldObservationSeverity(normalizedText, options),
+        observation_text: normalizedText,
+        promotion_related: Boolean(options?.promotionRelated),
+        competitor_related: Boolean(options?.competitorRelated),
+        osa_related: Boolean(options?.osaRelated),
+        planogram_violation: Boolean(options?.planogramViolation),
+        posm_violation: Boolean(options?.posmViolation),
+      });
+    };
+
+    const competitorNotes = visit.competitorNotes?.trim() ?? '';
+    if (competitorNotes) {
+      pushRow(
+        'VISIT_COMPETITOR_NOTE',
+        visit.id,
+        competitorNotes,
+        {
+          issueTag: 'competitor',
+          issueType: 'COMPETITOR_NOTE',
+          severityHint: 'MEDIUM',
+          competitorRelated: true,
+        },
+      );
+    }
+
+    const outletFeedback = visit.outletFeedback?.trim() ?? '';
+    if (outletFeedback) {
+      pushRow(
+        'VISIT_OUTLET_FEEDBACK',
+        visit.id,
+        outletFeedback,
+        {
+          issueTag: 'feedback',
+          issueType: 'OUTLET_FEEDBACK',
+          severityHint: 'LOW',
+        },
+      );
+    }
+
+    const feedbackAnswers = Array.isArray(visit.outletFeedbackAnswersJson)
+      ? visit.outletFeedbackAnswersJson
+      : [];
+    feedbackAnswers.forEach((answer, index) => {
+      const question = String((answer as Record<string, unknown>).question ?? '').trim();
+      const response = String(
+        (answer as Record<string, unknown>).answer ??
+          (answer as Record<string, unknown>).value ??
+          '',
+      ).trim();
+      const freeText = String(
+        (answer as Record<string, unknown>).notes ??
+          (answer as Record<string, unknown>).comment ??
+          '',
+      ).trim();
+      const composed = [question, response, freeText].filter(Boolean).join(' | ');
+      if (!composed) {
+        return;
+      }
+      pushRow(
+        'VISIT_FEEDBACK_ANSWER',
+        `${visit.id}:${index}`,
+        composed,
+        {
+          issueTag: 'feedback_answer',
+          issueType: 'OUTLET_FEEDBACK_ANSWER',
+          severityHint: 'LOW',
+        },
+      );
+    });
+
+    const promotions = Array.isArray(visit.promotionsJson) ? visit.promotionsJson : [];
+    promotions.forEach((promotion, index) => {
+      const record = promotion as Record<string, unknown>;
+      const composed = [
+        String(record.name ?? record.title ?? 'Promotion note').trim(),
+        String(record.status ?? '').trim(),
+        String(record.notes ?? record.comment ?? '').trim(),
+      ]
+        .filter(Boolean)
+        .join(' | ');
+      if (!composed) {
+        return;
+      }
+      pushRow(
+        'VISIT_PROMOTION_NOTE',
+        `${visit.id}:${index}`,
+        composed,
+        {
+          issueTag: 'promotion',
+          issueType: 'PROMOTION_NOTE',
+          severityHint: 'LOW',
+          promotionRelated: true,
+        },
+      );
+    });
+
+    const osaIssues = Array.isArray(visit.osaIssuesJson) ? visit.osaIssuesJson : [];
+    osaIssues.forEach((issue, index) => {
+      const record = issue as unknown as Record<string, unknown>;
+      const productId = Array.isArray(record.productIds)
+        ? String(record.productIds[0] ?? '').trim() || null
+        : String(record.productId ?? '').trim() || null;
+      const productName = Array.isArray(record.productNames)
+        ? String(record.productNames[0] ?? '').trim() || null
+        : String(record.productName ?? '').trim() || null;
+      const issueTag = String(record.tag ?? '').trim() || 'osa_issue';
+      const issueType = String(record.issueType ?? record.type ?? '').trim() || issueTag;
+      const composed = [
+        issueTag,
+        issueType,
+        String(record.notes ?? record.comment ?? '').trim(),
+        String(record.customerFeedback ?? '').trim(),
+      ]
+        .filter(Boolean)
+        .join(' | ');
+      if (!composed) {
+        return;
+      }
+      pushRow(
+        'VISIT_OSA_ISSUE',
+        `${visit.id}:${index}`,
+        composed,
+        {
+          issueTag,
+          issueType,
+          severityHint: issueTag.toLowerCase().includes('stock')
+            ? 'HIGH'
+            : issueTag.toLowerCase().includes('damage')
+              ? 'MEDIUM'
+              : 'MEDIUM',
+          productId,
+          productName,
+          osaRelated: true,
+          promotionRelated: composed.toLowerCase().includes('promotion'),
+          competitorRelated: composed.toLowerCase().includes('competitor'),
+        },
+      );
+    });
+
+    if (visit.planogramOk === false) {
+      pushRow(
+        'VISIT_PLANOGRAM_VIOLATION',
+        visit.id,
+        'Planogram not followed during the store visit.',
+        {
+          issueTag: 'planogram',
+          issueType: 'PLANOGRAM_VIOLATION',
+          severityHint: 'MEDIUM',
+          planogramViolation: true,
+        },
+      );
+    }
+
+    if (visit.posmOk === false) {
+      pushRow(
+        'VISIT_POSM_VIOLATION',
+        visit.id,
+        'POSM missing or not compliant during the store visit.',
+        {
+          issueTag: 'posm',
+          issueType: 'POSM_VIOLATION',
+          severityHint: 'MEDIUM',
+          posmViolation: true,
+        },
+      );
+    }
+
+    return rows;
+  }
+
+  private buildFieldObservationRowsFromDailyReport(report: DailyReport) {
+    const observationText = [
+      report.repComments?.trim() ?? '',
+      this.serializeJsonValue(report.incidentSummaryJson),
+      this.serializeJsonValue(report.osaSummaryJson),
+      this.serializeJsonValue(report.deliverySummaryJson),
+      this.serializeJsonValue(report.returnSummaryJson),
+    ]
+      .filter(Boolean)
+      .join(' | ');
+
+    if (!observationText) {
+      return [];
+    }
+
+    return [
+      {
+        observation_id: `DAILY_REPORT:${report.id}`,
+        source_type: 'DAILY_REPORT',
+        source_id: report.id,
+        signal_date: report.reportDate,
+        canonical_shop_id: null,
+        sales_rep_id: report.salesRepId,
+        territory_id: report.route?.territoryId ?? null,
+        warehouse_id: report.route?.warehouseId ?? null,
+        route_id: report.routeId,
+        product_id: null,
+        product_name: null,
+        issue_tag: 'daily_report',
+        issue_type: 'DAILY_REPORT',
+        severity_hint: this.inferFieldObservationSeverity(observationText),
+        observation_text: observationText,
+        promotion_related: observationText.toLowerCase().includes('promotion'),
+        competitor_related: observationText.toLowerCase().includes('competitor'),
+        osa_related: observationText.toLowerCase().includes('osa'),
+        planogram_violation: observationText.toLowerCase().includes('planogram'),
+        posm_violation: observationText.toLowerCase().includes('posm'),
+      },
+    ];
+  }
+
+  private inferFieldObservationSeverity(
+    text: string,
+    options?: {
+      competitorRelated?: boolean;
+      osaRelated?: boolean;
+      planogramViolation?: boolean;
+      posmViolation?: boolean;
+    },
+  ) {
+    const normalized = text.toLowerCase();
+    if (
+      normalized.includes('stockout') ||
+      normalized.includes('out of stock') ||
+      normalized.includes('oos') ||
+      (options?.competitorRelated && options?.osaRelated)
+    ) {
+      return 'HIGH';
+    }
+
+    if (
+      options?.planogramViolation ||
+      options?.posmViolation ||
+      options?.osaRelated ||
+      options?.competitorRelated ||
+      normalized.includes('delay') ||
+      normalized.includes('warehouse')
+    ) {
+      return 'MEDIUM';
+    }
+
+    return 'LOW';
+  }
+
+  private serializeJsonValue(value: unknown) {
+    if (value === null || value === undefined) {
+      return '';
+    }
+
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return String(value);
+    }
   }
 
   private normalizeFilters(query: ExportQuery): ExportFilters {
@@ -2870,9 +3241,41 @@ export class ExportsService {
       'has_pending_delivery',
       'planogram_ok',
       'posm_ok',
+      'planogram_violation_label',
+      'posm_violation_label',
+      'competitor_notes',
+      'outlet_feedback',
+      'outlet_feedback_answers_json',
+      'promotions_json',
+      'osa_issue_count',
       'photo_count',
       'created_at',
       'updated_at',
+    ]);
+  }
+
+  private fieldObservationColumns() {
+    return this.columnsForKeys([
+      'observation_id',
+      'source_type',
+      'source_id',
+      'signal_date',
+      'canonical_shop_id',
+      'sales_rep_id',
+      'territory_id',
+      'warehouse_id',
+      'route_id',
+      'product_id',
+      'product_name',
+      'issue_tag',
+      'issue_type',
+      'severity_hint',
+      'observation_text',
+      'promotion_related',
+      'competitor_related',
+      'osa_related',
+      'planogram_violation',
+      'posm_violation',
     ]);
   }
 
@@ -3099,6 +3502,55 @@ export class ExportsService {
         data_type: 'number',
         description:
           'Delivered quantity converted to base units using the product units-per-case value.',
+      },
+      {
+        file_name: 'sales_rep_visits.csv',
+        column_name: 'competitor_notes',
+        data_type: 'string',
+        description:
+          'Free-text competitor comments captured by the sales rep during the store visit.',
+      },
+      {
+        file_name: 'sales_rep_visits.csv',
+        column_name: 'outlet_feedback',
+        data_type: 'string',
+        description:
+          'Narrative feedback captured from the shop during the store visit.',
+      },
+      {
+        file_name: 'sales_rep_visits.csv',
+        column_name: 'planogram_violation_label',
+        data_type: 'string',
+        description:
+          'Human-readable label shown when the visit recorded a planogram failure.',
+      },
+      {
+        file_name: 'sales_rep_visits.csv',
+        column_name: 'posm_violation_label',
+        data_type: 'string',
+        description:
+          'Human-readable label shown when the visit recorded a POSM compliance failure.',
+      },
+      {
+        file_name: 'field_observations.csv',
+        column_name: 'observation_text',
+        data_type: 'string',
+        description:
+          'Flattened field note text from visits or daily reports, ready for planner review or AI signal extraction.',
+      },
+      {
+        file_name: 'field_observations.csv',
+        column_name: 'issue_tag',
+        data_type: 'string',
+        description:
+          'Short tag describing the observation source, such as competitor, OSA issue, promotion note, or compliance failure.',
+      },
+      {
+        file_name: 'field_observations.csv',
+        column_name: 'severity_hint',
+        data_type: 'string',
+        description:
+          'Heuristic severity label derived from the observation type so imported planners can rank the evidence.',
       },
       {
         file_name: 'osa_stock_counts.csv',

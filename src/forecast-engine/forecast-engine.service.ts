@@ -4,6 +4,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
 import { ActivityLog } from '../activity/entities/activity.entity';
+import {
+  AiWriterService,
+  type InsightWriterRequest,
+  type InsightWriterResponse,
+} from '../ai-writer/ai-writer.service';
 import { DailyReport } from '../daily-reports/entities/daily-report.entity';
 import { Order } from '../orders/entities/order.entity';
 import { Product } from '../products/entities/product.entity';
@@ -17,6 +22,7 @@ import { toCsv, type CsvColumn } from '../exports/utils/csv.util';
 import {
   parseForecastExportBundle,
   type ImportedDemandType,
+  type ImportedFieldObservation,
   type ImportedForecastBundle,
   type ImportedPlannerForecastRow,
 } from './forecast-engine-import.util';
@@ -202,6 +208,8 @@ type PlannerBrief = {
   topics: Array<{ title: string; detail: string }>;
 };
 
+type ForecastReportNarrative = InsightWriterResponse;
+
 type ForecastPreview = {
   summary: ForecastResult['summary'] & {
     planningWindow: string;
@@ -283,6 +291,7 @@ function formatCases(value: number) {
 @Injectable()
 export class ForecastEngineService {
   constructor(
+    private readonly aiWriterService: AiWriterService,
     @InjectRepository(ActivityLog)
     private readonly activityLogsRepo: Repository<ActivityLog>,
     @InjectRepository(DailyReport)
@@ -409,14 +418,16 @@ export class ForecastEngineService {
   async generateForecastReport(query: ForecastEngineQuery) {
     const preview = await this.generateForecastPreview(query);
     const filename = `ars_demand_forecast_planner_${preview.summary.generatedAt.slice(0, 10)}.pdf`;
-    const buffer = await this.createPlannerPdf(preview);
+    const narrative = await this.buildForecastReportNarrative(preview);
+    const buffer = await this.createPlannerPdf(preview, narrative);
     return { filename, buffer };
   }
 
   async generateImportedForecastReport(buffer: Buffer, query: ForecastEngineQuery) {
     const preview = await this.generateImportedForecastPreview(buffer, query);
     const filename = `ars_demand_forecast_planner_${preview.summary.generatedAt.slice(0, 10)}.pdf`;
-    const pdfBuffer = await this.createPlannerPdf(preview);
+    const narrative = await this.buildForecastReportNarrative(preview);
+    const pdfBuffer = await this.createPlannerPdf(preview, narrative);
     return { filename, buffer: pdfBuffer };
   }
 
@@ -482,6 +493,7 @@ export class ForecastEngineService {
       incidents,
       dailyReports,
       activityLogs,
+      visits,
       productById,
       filters,
     );
@@ -606,6 +618,11 @@ export class ForecastEngineService {
       confidence_score: row.confidence_score,
       confidence_level: row.confidence_level,
     }));
+    const aiExplanations = this.buildImportedAiExplanations(
+      bundle.fieldObservations,
+      bundle.products,
+      filters,
+    );
     const exceptions = this.buildImportedExceptions(forecastOutput, inventoryRows);
     const averageConfidenceScore = this.average(
       forecastOutput.map((row) => row.confidence_score),
@@ -623,7 +640,7 @@ export class ForecastEngineService {
         historyEndDate: this.dateKey(filters.toDate),
         forecastRows: forecastOutput.length,
         exceptions: exceptions.length,
-        aiSignals: 0,
+        aiSignals: aiExplanations.length,
         averageConfidenceScore: this.roundNumber(averageConfidenceScore),
         averageWape: null,
         modelVersion: MODEL_VERSION,
@@ -632,7 +649,7 @@ export class ForecastEngineService {
       accuracyReport: [],
       exceptions,
       confidenceScores,
-      aiExplanations: [],
+      aiExplanations,
     };
   }
 
@@ -1143,6 +1160,157 @@ export class ForecastEngineService {
     };
   }
 
+  private async buildForecastReportNarrative(
+    preview: ForecastPreview,
+  ): Promise<ForecastReportNarrative> {
+    const totalRecommendedCases = this.roundNumber(
+      preview.productionRecommendations.reduce(
+        (sum, recommendation) =>
+          sum + recommendation.recommended_production_cases,
+        0,
+      ),
+    );
+    const totalRequiredCases = this.roundNumber(
+      preview.productionRecommendations.reduce(
+        (sum, recommendation) => sum + recommendation.required_cases,
+        0,
+      ),
+    );
+    const totalCurrentStockCases = this.roundNumber(
+      preview.productionRecommendations.reduce(
+        (sum, recommendation) => sum + recommendation.current_stock_cases,
+        0,
+      ),
+    );
+    const topRecommendation = preview.productionRecommendations[0];
+    const groupedExceptions = this.groupExceptionWatchlist(preview.exceptions);
+    const topSignals = preview.aiExplanations.slice(0, 5);
+    const request: InsightWriterRequest = {
+      reportType: 'forecast_planner',
+      audience: 'demand_planner',
+      window: {
+        fromDate: preview.summary.historyStartDate,
+        toDate: preview.summary.forecastEndDate,
+      },
+      filters: {
+        planningWindow: preview.summary.planningWindow,
+        sourceMode: preview.summary.sourceMode,
+        productFocus:
+          preview.summary.selectedProductId ??
+          preview.controls.products.find((row) => row.value === '')?.label ??
+          'all_products',
+      },
+      metrics: {
+        forecastRows: preview.summary.forecastRows,
+        averageConfidenceScore: preview.summary.averageConfidenceScore,
+        averageWape: preview.summary.averageWape,
+        exceptions: preview.summary.exceptions,
+        aiSignals: preview.summary.aiSignals,
+        totalRecommendedCases,
+        totalRequiredCases,
+        totalCurrentStockCases,
+      },
+      charts: [
+        {
+          title: 'Suggested manufacture line',
+          purpose:
+            'Explain how much manufacture is recommended across the future horizon.',
+          dataSummary:
+            preview.manufacturePlan.length > 0
+              ? `The manufacture line contains ${preview.manufacturePlan.length} time buckets from ${preview.summary.forecastStartDate} to ${preview.summary.forecastEndDate}.`
+              : 'No manufacture line points were available.',
+        },
+        {
+          title: 'Top manufacturing recommendations',
+          purpose:
+            'Show which products should be increased, held, or slowed and why.',
+          dataSummary: preview.productionRecommendations
+            .slice(0, 5)
+            .map(
+              (row) =>
+                `${row.product_name}: action ${row.action}, build ${this.roundNumber(row.recommended_production_cases)} cases, stock ${this.roundNumber(row.current_stock_cases)} cases.`,
+            )
+            .join(' | '),
+        },
+        {
+          title: 'Field evidence and risk',
+          purpose:
+            'Summarize competitor, OSA, promotion, and execution evidence affecting the forecast.',
+          dataSummary:
+            topSignals.length > 0
+              ? topSignals
+                  .map(
+                    (row) =>
+                      `${row.extracted_signal} (${row.severity}) on ${row.signal_date}${
+                        row.product_name ? ` for ${row.product_name}` : ''
+                      }`,
+                  )
+                  .join(' | ')
+              : 'No field evidence signals were available in this run.',
+        },
+      ],
+      anomalies: groupedExceptions
+        .slice(0, 5)
+        .map(
+          (row) =>
+            `${row.exceptionType} affecting ${row.count} row(s): ${row.reason}`,
+        ),
+      recommendedActions: preview.productionRecommendations
+        .slice(0, 6)
+        .map(
+          (row) =>
+            `${row.action} ${this.roundNumber(row.recommended_production_cases)} cases for ${row.product_name}: ${row.reason_summary}`,
+        ),
+    };
+
+    try {
+      const narrative = await this.aiWriterService.writeNarrative(request);
+      if (narrative) {
+        return narrative;
+      }
+    } catch {
+      // Fall back to deterministic wording when the writer is unavailable.
+    }
+
+    return {
+      model: 'deterministic-fallback',
+      generatedAt: new Date().toISOString(),
+      reportTitle: preview.plannerBrief.title,
+      headline: preview.plannerBrief.headline,
+      executiveSummary: preview.plannerBrief.executiveSummary,
+      storyOfTheNumbers: topRecommendation
+        ? `${topRecommendation.product_name} is the lead recommendation in this horizon, while total required demand sits near ${formatCases(totalRequiredCases)} cases against ${formatCases(totalCurrentStockCases)} cases of stock.`
+        : `The planner is reading ${formatCases(preview.summary.forecastRows)} forecast rows with ${Math.round(preview.summary.averageConfidenceScore * 100)}% average confidence.`,
+      anomalyExplanation:
+        groupedExceptions[0]?.reason ??
+        'No grouped exception explanation was available for this run.',
+      managementRecommendation:
+        totalRecommendedCases <= 0
+          ? `No additional manufacture is required across the visible scope right now. Current stock of ${formatCases(totalCurrentStockCases)} cases already covers the required ${formatCases(totalRequiredCases)} cases in the selected horizon.`
+          : topRecommendation
+            ? `${topRecommendation.reason_summary}`
+            : 'Use the planner as a manufacturing decision aid, then confirm with stock cover and local demand context.',
+      sectionTitles: [
+        'Executive summary',
+        'Manufacture outlook and key numbers',
+        'Recommended product actions',
+        'Exceptions and field evidence',
+      ],
+      chartCaptions: [
+        'The manufacture line shows suggested build pace across the selected future horizon.',
+        'Recommended actions convert future demand, stock cover, and safety stock into product-level manufacture decisions.',
+        'Field evidence captures OSA, competitor, promotion, and execution notes that affect how the numbers should be read.',
+        'Grouped exceptions show where the forecast remains directional, uncertain, or stock-constrained.',
+      ],
+      callouts: [
+        preview.plannerBrief.headline,
+        topRecommendation?.reason_summary ?? '',
+        groupedExceptions[0]?.reason ?? '',
+        topSignals[0]?.business_explanation ?? '',
+      ].filter(Boolean),
+    };
+  }
+
   private buildImportedExceptions(
     forecasts: ForecastOutputRow[],
     inventoryRows: PlannerInventoryRow[],
@@ -1197,6 +1365,110 @@ export class ForecastEngineService {
     return exceptions.slice(0, 500);
   }
 
+  private buildImportedAiExplanations(
+    observations: ImportedFieldObservation[],
+    products: ImportedForecastBundle['products'],
+    filters: ForecastFilters,
+  ) {
+    const rows: AiExplanationRow[] = [];
+    const productsForLookup = products.map((product) => ({
+      id: product.product_id,
+      productName: product.product_name,
+      sku: product.sku,
+    })) as Array<Pick<Product, 'id' | 'productName' | 'sku'>>;
+
+    observations.forEach((observation) => {
+      if (!this.isInRange(observation.signal_date, filters)) {
+        return;
+      }
+
+      const extracted =
+        this.extractImportedObservationSignal(observation) ??
+        this.extractAiSignal(observation.observation_text);
+
+      if (!extracted) {
+        return;
+      }
+
+      const product =
+        observation.product_id && observation.product_name
+          ? {
+              id: observation.product_id,
+              productName: observation.product_name,
+            }
+          : this.findProductMention(
+              observation.observation_text,
+              productsForLookup,
+            );
+
+      rows.push({
+        explanation_id: observation.observation_id,
+        source_type: observation.source_type,
+        source_id: observation.source_id,
+        signal_date: observation.signal_date,
+        product_id: product?.id ?? observation.product_id ?? null,
+        product_name:
+          product?.productName ?? observation.product_name ?? null,
+        territory_id: observation.territory_id,
+        extracted_signal: extracted.signal,
+        severity: extracted.severity,
+        confidence_score: extracted.confidence,
+        forecast_adjustment_reason: extracted.reason,
+        business_explanation: extracted.explanation,
+      });
+    });
+
+    return rows.sort((left, right) => right.confidence_score - left.confidence_score);
+  }
+
+  private extractImportedObservationSignal(observation: ImportedFieldObservation) {
+    if (observation.planogram_violation || observation.posm_violation) {
+      return {
+        signal: 'execution_compliance_risk',
+        severity: 'MEDIUM' as const,
+        confidence: 0.71,
+        reason: 'execution_compliance_risk',
+        explanation:
+          'Imported field observations show planogram or POSM execution failures that can suppress demand conversion in-store.',
+      };
+    }
+
+    if (observation.osa_related) {
+      return {
+        signal: 'osa_execution_risk',
+        severity: 'MEDIUM' as const,
+        confidence: 0.7,
+        reason: 'osa_execution_risk',
+        explanation:
+          'Imported field observations show OSA or shelf-availability issues that can suppress visible movement and reduce signal quality.',
+      };
+    }
+
+    if (observation.competitor_related) {
+      return {
+        signal: 'competitor_pressure',
+        severity: 'MEDIUM' as const,
+        confidence: 0.72,
+        reason: 'competitor_pressure',
+        explanation:
+          'Imported field observations mention competitor activity or substitution pressure that can distort observed movement.',
+      };
+    }
+
+    if (observation.promotion_related) {
+      return {
+        signal: 'promotion_demand_shift',
+        severity: 'LOW' as const,
+        confidence: 0.66,
+        reason: 'promotion_adjustment',
+        explanation:
+          'Imported field observations reference promotions or offers, so the forecast should treat the period as campaign-influenced.',
+      };
+    }
+
+    return null;
+  }
+
   private buildImportedForecastExplanation(row: ImportedPlannerForecastRow) {
     const demandLabel =
       row.demand_type === 'REPLENISHMENT_DEMAND'
@@ -1214,12 +1486,15 @@ export class ForecastEngineService {
     return `${this.roundNumber(row.forecast_cases)} cases forecast for ${demandLabel}; ${trendText}.${promotionText}`;
   }
 
-  private async createPlannerPdf(preview: ForecastPreview) {
+  private async createPlannerPdf(
+    preview: ForecastPreview,
+    narrative: ForecastReportNarrative,
+  ) {
     const document = new PDFDocument({
       size: 'A4',
       margin: 42,
       info: {
-        Title: preview.plannerBrief.title,
+        Title: narrative.reportTitle,
         Author: 'Nestle Insight Demand Planner Portal',
       },
     });
@@ -1230,113 +1505,133 @@ export class ForecastEngineService {
         (product) => product.value === (preview.summary.selectedProductId ?? ''),
       )?.label ?? 'All products';
 
-    const pageWidth = document.page.width - document.page.margins.left - document.page.margins.right;
-    const drawMetric = (
-      x: number,
-      y: number,
-      width: number,
-      label: string,
-      value: string,
-    ) => {
-      document
-        .roundedRect(x, y, width, 58, 10)
-        .fillAndStroke('#f8fbf5', '#d7e4d2');
-      document
-        .fillColor('#5b6b54')
-        .fontSize(9)
-        .text(label, x + 10, y + 10, { width: width - 20 });
-      document
-        .fillColor('#2f3b2c')
-        .fontSize(16)
-        .text(value, x + 10, y + 26, { width: width - 20 });
-    };
+    const pageWidth =
+      document.page.width - document.page.margins.left - document.page.margins.right;
+    const groupedExceptions = this.groupExceptionWatchlist(preview.exceptions);
+    const groupedSignals = this.groupAiEvidence(preview.aiExplanations);
+    const totalRecommendedCases = this.roundNumber(
+      preview.productionRecommendations.reduce(
+        (sum, recommendation) =>
+          sum + recommendation.recommended_production_cases,
+        0,
+      ),
+    );
+    const totalCurrentStockCases = this.roundNumber(
+      preview.productionRecommendations.reduce(
+        (sum, recommendation) => sum + recommendation.current_stock_cases,
+        0,
+      ),
+    );
+    const totalRequiredCases = this.roundNumber(
+      preview.productionRecommendations.reduce(
+        (sum, recommendation) => sum + recommendation.required_cases,
+        0,
+      ),
+    );
 
     document
       .fillColor('#6f8566')
       .fontSize(11)
       .text('ARS DEMAND FORECAST PLANNER REPORT');
     document
-      .moveDown(0.4)
+      .moveDown(0.35)
       .fillColor('#243022')
       .fontSize(24)
-      .text(preview.plannerBrief.title, { width: pageWidth });
+      .text(narrative.reportTitle, { width: pageWidth });
     document
-      .moveDown(0.4)
+      .moveDown(0.35)
       .fillColor('#51604d')
       .fontSize(11)
       .text(
-        `${preview.sourceSummary.label} | Generated ${preview.summary.generatedAt.slice(0, 10)} | Forecast horizon ${preview.summary.forecastStartDate} to ${preview.summary.forecastEndDate}`,
+        `${preview.sourceSummary.label} | Generated ${preview.summary.generatedAt.slice(0, 10)} | History ${preview.summary.historyStartDate} to ${preview.summary.historyEndDate} | Forecast ${preview.summary.forecastStartDate} to ${preview.summary.forecastEndDate} | Product ${selectedProductLabel}`,
         { width: pageWidth },
       );
 
-    document.moveDown(0.8);
-    document
-      .roundedRect(document.x, document.y, pageWidth, 58, 12)
-      .fillAndStroke('#eef6f2', '#d6e4de');
-    document
-      .fillColor('#2f3b2c')
-      .fontSize(15)
-      .text(preview.plannerBrief.headline, document.x + 14, document.y + 12, {
-        width: pageWidth - 28,
-      });
-    document
-      .fillColor('#5d6d60')
-      .fontSize(10)
-      .text(preview.plannerBrief.executiveSummary, document.x + 14, document.y + 32, {
-        width: pageWidth - 28,
-      });
+    this.drawForecastPdfPanel(
+      document,
+      pageWidth,
+      narrative.headline,
+      narrative.executiveSummary,
+      '#eef6f2',
+      '#d6e4de',
+    );
+    this.drawForecastPdfPanel(
+      document,
+      pageWidth,
+      narrative.sectionTitles[0] ?? 'Story of the numbers',
+      narrative.storyOfTheNumbers,
+      '#fffaf4',
+      '#eadfd3',
+    );
 
-    document.moveDown(2.2);
-    const metricY = document.y;
-    const metricWidth = (pageWidth - 24) / 4;
-    drawMetric(
-      document.x,
-      metricY,
-      metricWidth,
-      'Forecast rows',
-      formatCases(preview.summary.forecastRows),
-    );
-    drawMetric(
-      document.x + metricWidth + 8,
-      metricY,
-      metricWidth,
-      'Avg confidence',
-      `${Math.round(preview.summary.averageConfidenceScore * 100)}%`,
-    );
-    drawMetric(
-      document.x + (metricWidth + 8) * 2,
-      metricY,
-      metricWidth,
-      'Exceptions',
-      formatCases(preview.summary.exceptions),
-    );
-    drawMetric(
-      document.x + (metricWidth + 8) * 3,
-      metricY,
-      metricWidth,
-      'AI signals',
-      formatCases(preview.summary.aiSignals),
-    );
-    document.y = metricY + 74;
+    this.drawForecastMetricGrid(document, pageWidth, [
+      {
+        label: 'Forecast rows',
+        value: formatCases(preview.summary.forecastRows),
+      },
+      {
+        label: 'Avg confidence',
+        value: `${Math.round(preview.summary.averageConfidenceScore * 100)}%`,
+      },
+      {
+        label: 'Avg WAPE',
+        value:
+          preview.summary.averageWape === null
+            ? 'N/A'
+            : `${Math.round(preview.summary.averageWape * 100)}%`,
+      },
+      {
+        label: 'Exceptions',
+        value: formatCases(preview.summary.exceptions),
+      },
+      {
+        label: 'AI signals',
+        value: formatCases(preview.summary.aiSignals),
+      },
+      {
+        label: 'Build needed',
+        value: `${formatCases(totalRecommendedCases)} cases`,
+      },
+    ]);
 
+    this.ensureForecastPdfSpace(document, 210);
     document
       .fillColor('#243022')
       .fontSize(14)
       .text('Planner topics', { width: pageWidth });
-    document.moveDown(0.4);
-    for (const topic of preview.plannerBrief.topics) {
-      document
-        .fillColor('#243022')
-        .fontSize(11)
-        .text(topic.title, { continued: false });
-      document
-        .fillColor('#5d6d60')
-        .fontSize(10)
-        .text(topic.detail, { width: pageWidth });
-      document.moveDown(0.35);
-    }
+    document.moveDown(0.35);
+    preview.plannerBrief.topics.forEach((topic) => {
+      this.drawForecastPdfPanel(
+        document,
+        pageWidth,
+        topic.title,
+        topic.detail,
+        '#f8fbf5',
+        '#d7e4d2',
+        10,
+        11,
+        9.5,
+      );
+    });
 
-    document.moveDown(0.5);
+    document.addPage();
+    document
+      .fillColor('#243022')
+      .fontSize(14)
+      .text(
+        narrative.sectionTitles[1] ?? 'Manufacture outlook and key numbers',
+        { width: pageWidth },
+      );
+    document
+      .moveDown(0.25)
+      .fillColor('#5d6d60')
+      .fontSize(10)
+      .text(
+        narrative.chartCaptions[0] ??
+          'The manufacture line shows suggested build pace across the selected future horizon.',
+        { width: pageWidth },
+      );
+    document.moveDown(0.45);
     this.drawForecastLineChart(
       document,
       preview.manufacturePlan,
@@ -1344,65 +1639,95 @@ export class ForecastEngineService {
       selectedProductLabel,
     );
 
-    document.moveDown(0.8);
+    this.drawForecastMetricGrid(document, pageWidth, [
+      {
+        label: 'Required demand',
+        value: `${formatCases(totalRequiredCases)} cases`,
+      },
+      {
+        label: 'Current stock',
+        value: `${formatCases(totalCurrentStockCases)} cases`,
+      },
+      {
+        label: 'Recommended build',
+        value: `${formatCases(totalRecommendedCases)} cases`,
+      },
+    ]);
+
+    this.drawForecastPdfPanel(
+      document,
+      pageWidth,
+      'Management recommendation',
+      narrative.managementRecommendation,
+      '#fffaf4',
+      '#eadfd3',
+    );
+
+    document.addPage();
     document
       .fillColor('#243022')
       .fontSize(14)
-      .text('Recommended manufacturing actions', { width: pageWidth });
-    document.moveDown(0.4);
+      .text(
+        narrative.sectionTitles[2] ?? 'Recommended product actions',
+        { width: pageWidth },
+      );
+    document
+      .moveDown(0.25)
+      .fillColor('#5d6d60')
+      .fontSize(10)
+      .text(
+        narrative.chartCaptions[1] ??
+          'Recommended actions convert future demand, stock cover, and safety stock into product-level manufacture decisions.',
+        { width: pageWidth },
+      );
+    document.moveDown(0.45);
 
-    for (const recommendation of preview.productionRecommendations.slice(0, 8)) {
-      if (document.y > 690) {
-        document.addPage();
-      }
-      document
-        .roundedRect(document.x, document.y, pageWidth, 74, 10)
-        .fillAndStroke('#fffaf4', '#eadfd3');
-      document
-        .fillColor('#243022')
-        .fontSize(11)
-        .text(
-          `${
-            recommendation.recommended_production_cases > 0
-              ? `Manufacture ${formatCases(recommendation.recommended_production_cases)} cases of ${recommendation.product_name}`
-              : `No additional manufacture needed for ${recommendation.product_name}`
-          } | ${recommendation.action} | ${recommendation.urgency}`,
-          document.x + 12,
-          document.y + 10,
-          { width: pageWidth - 24 },
-        );
-      document
-        .fillColor('#5d6d60')
-        .fontSize(10)
-        .text(recommendation.reason_summary, document.x + 12, document.y + 28, {
-          width: pageWidth - 24,
-        });
-      document
-        .fillColor('#243022')
-        .fontSize(9)
-        .text(
-          `Forecast ${formatCases(recommendation.forecast_cases)} cases | Stock ${formatCases(recommendation.current_stock_cases)} | Build ${formatCases(recommendation.recommended_production_cases)} | Daily rate ${formatCases(recommendation.suggested_daily_manufacture_cases)}`,
-          document.x + 12,
-          document.y + 50,
-          { width: pageWidth - 24 },
-        );
-      document.y += 84;
-    }
+    preview.productionRecommendations.slice(0, 12).forEach((recommendation) => {
+      this.drawForecastRecommendationCard(document, pageWidth, recommendation);
+    });
 
-    if (preview.exceptions.length > 0) {
-      document.moveDown(0.4);
+    const shouldAddEvidencePage =
+      groupedExceptions.length > 0 || groupedSignals.length > 0;
+    if (shouldAddEvidencePage) {
+      document.addPage();
       document
         .fillColor('#243022')
         .fontSize(14)
-        .text('Key exception watchlist', { width: pageWidth });
-      document.moveDown(0.4);
-      for (const row of preview.exceptions.slice(0, 6)) {
-        document
-          .fillColor('#7e6140')
-          .fontSize(10)
-          .text(`${row.exception_type}: ${row.reason}`, { width: pageWidth });
-        document.moveDown(0.2);
+        .text(
+          narrative.sectionTitles[3] ?? 'Exceptions and field evidence',
+          { width: pageWidth },
+        );
+      document
+        .moveDown(0.25)
+        .fillColor('#5d6d60')
+        .fontSize(10)
+        .text(
+          narrative.chartCaptions[2] ??
+            'Field evidence captures OSA, competitor, promotion, and execution notes that affect how the numbers should be read.',
+          { width: pageWidth },
+        );
+      document.moveDown(0.45);
+
+      if (groupedSignals.length > 0) {
+        this.drawForecastPdfPanel(
+          document,
+          pageWidth,
+          'Field evidence summary',
+          groupedSignals
+            .slice(0, 6)
+            .map(
+              (signal) =>
+                `${signal.signalLabel}: ${signal.count} note(s). ${signal.explanation}`,
+            )
+            .join(' '),
+          '#f8fbf5',
+          '#d7e4d2',
+        );
       }
+
+      groupedExceptions.slice(0, 8).forEach((row) => {
+        this.drawForecastGroupedExceptionCard(document, pageWidth, row);
+      });
     }
 
     document.end();
@@ -1410,6 +1735,294 @@ export class ForecastEngineService {
     return await new Promise<Buffer>((resolve) => {
       document.on('end', () => resolve(Buffer.concat(chunks)));
     });
+  }
+
+  private ensureForecastPdfSpace(document: any, requiredHeight: number) {
+    const bottomLimit = document.page.height - document.page.margins.bottom;
+    if (document.y + requiredHeight <= bottomLimit) {
+      return;
+    }
+
+    document.addPage();
+  }
+
+  private drawForecastPdfPanel(
+    document: any,
+    width: number,
+    title: string,
+    body: string,
+    fillColor: string,
+    borderColor: string,
+    borderRadius = 12,
+    titleFontSize = 14,
+    bodyFontSize = 10,
+  ) {
+    const innerWidth = width - 28;
+    const titleHeight = document.heightOfString(title, {
+      width: innerWidth,
+      align: 'left',
+    });
+    const bodyHeight = document.heightOfString(body, {
+      width: innerWidth,
+      align: 'left',
+    });
+    const panelHeight = Math.max(72, titleHeight + bodyHeight + 28);
+
+    this.ensureForecastPdfSpace(document, panelHeight + 8);
+    const x = document.x;
+    const y = document.y;
+
+    document.roundedRect(x, y, width, panelHeight, borderRadius).fillAndStroke(fillColor, borderColor);
+    document
+      .fillColor('#243022')
+      .fontSize(titleFontSize)
+      .text(title, x + 14, y + 12, { width: innerWidth });
+    document
+      .fillColor('#5d6d60')
+      .fontSize(bodyFontSize)
+      .text(body, x + 14, y + 18 + titleHeight, { width: innerWidth });
+
+    document.y = y + panelHeight + 12;
+  }
+
+  private drawForecastMetricGrid(
+    document: any,
+    width: number,
+    metrics: Array<{ label: string; value: string }>,
+  ) {
+    const columns = metrics.length <= 3 ? metrics.length : 3;
+    const gap = 10;
+    const cardWidth = (width - gap * (columns - 1)) / columns;
+    let index = 0;
+
+    while (index < metrics.length) {
+      const rowMetrics = metrics.slice(index, index + columns);
+      const rowCards = rowMetrics.map((metric) => {
+        const valueHeight = document.heightOfString(metric.value, {
+          width: cardWidth - 20,
+        });
+        return {
+          ...metric,
+          height: Math.max(62, 30 + valueHeight),
+        };
+      });
+      const rowHeight = Math.max(...rowCards.map((card) => card.height));
+      this.ensureForecastPdfSpace(document, rowHeight + 10);
+      const y = document.y;
+
+      rowCards.forEach((card, cardIndex) => {
+        const x = document.x + (cardWidth + gap) * cardIndex;
+        document
+          .roundedRect(x, y, cardWidth, rowHeight, 10)
+          .fillAndStroke('#f8fbf5', '#d7e4d2');
+        document
+          .fillColor('#5b6b54')
+          .fontSize(9)
+          .text(card.label, x + 10, y + 10, { width: cardWidth - 20 });
+        document
+          .fillColor('#2f3b2c')
+          .fontSize(15)
+          .text(card.value, x + 10, y + 26, { width: cardWidth - 20 });
+      });
+
+      document.y = y + rowHeight + 12;
+      index += columns;
+    }
+  }
+
+  private drawForecastRecommendationCard(
+    document: any,
+    width: number,
+    recommendation: PlannerRecommendation,
+  ) {
+    const title =
+      recommendation.recommended_production_cases > 0
+        ? `Manufacture ${formatCases(recommendation.recommended_production_cases)} cases of ${recommendation.product_name}`
+        : `No additional manufacture needed for ${recommendation.product_name}`;
+    const statusLine = `Action ${recommendation.action} | Urgency ${recommendation.urgency} | Horizon ${recommendation.horizon_start} to ${recommendation.horizon_end}`;
+    const metricsLine = `Forecast ${formatCases(recommendation.forecast_cases)} cases | Stock ${formatCases(recommendation.current_stock_cases)} | Required ${formatCases(recommendation.required_cases)} | Build ${formatCases(recommendation.recommended_production_cases)} | Daily pace ${formatCases(recommendation.suggested_daily_manufacture_cases)}`;
+    const reasonsLine = recommendation.reasons.slice(0, 3).join(' ');
+    const innerWidth = width - 24;
+    const titleHeight = document.heightOfString(title, { width: innerWidth });
+    const statusHeight = document.heightOfString(statusLine, { width: innerWidth });
+    const summaryHeight = document.heightOfString(recommendation.reason_summary, {
+      width: innerWidth,
+    });
+    const reasonsHeight = reasonsLine
+      ? document.heightOfString(reasonsLine, { width: innerWidth })
+      : 0;
+    const metricsHeight = document.heightOfString(metricsLine, {
+      width: innerWidth,
+    });
+    const cardHeight = Math.max(
+      88,
+      titleHeight + statusHeight + summaryHeight + reasonsHeight + metricsHeight + 42,
+    );
+
+    this.ensureForecastPdfSpace(document, cardHeight + 10);
+    const x = document.x;
+    const y = document.y;
+
+    document.roundedRect(x, y, width, cardHeight, 10).fillAndStroke('#fffaf4', '#eadfd3');
+    document
+      .fillColor('#243022')
+      .fontSize(11)
+      .text(title, x + 12, y + 10, { width: innerWidth });
+    let cursorY = y + 14 + titleHeight;
+    document
+      .fillColor('#6b7465')
+      .fontSize(9)
+      .text(statusLine, x + 12, cursorY, { width: innerWidth });
+    cursorY += statusHeight + 6;
+    document
+      .fillColor('#5d6d60')
+      .fontSize(10)
+      .text(recommendation.reason_summary, x + 12, cursorY, {
+        width: innerWidth,
+      });
+    cursorY += summaryHeight + 6;
+    if (reasonsLine) {
+      document
+        .fillColor('#71806c')
+        .fontSize(9)
+        .text(reasonsLine, x + 12, cursorY, { width: innerWidth });
+      cursorY += reasonsHeight + 6;
+    }
+    document
+      .fillColor('#243022')
+      .fontSize(9)
+      .text(metricsLine, x + 12, cursorY, { width: innerWidth });
+    document.y = y + cardHeight + 12;
+  }
+
+  private drawForecastGroupedExceptionCard(
+    document: any,
+    width: number,
+    row: {
+      exceptionType: string;
+      severity: ExceptionRow['severity'];
+      count: number;
+      reason: string;
+      recommendedAction: string;
+      sampleProducts: string[];
+    },
+  ) {
+    const accent =
+      row.severity === 'HIGH'
+        ? { fill: '#fff3f1', border: '#e7b8b1' }
+        : row.severity === 'MEDIUM'
+          ? { fill: '#fff8eb', border: '#ead9ae' }
+          : { fill: '#f4fbef', border: '#cfe0c8' };
+    const title = `${row.exceptionType} | ${row.severity} | ${row.count} row(s)`;
+    const productLine =
+      row.sampleProducts.length > 0
+        ? `Examples: ${row.sampleProducts.join(', ')}`
+        : 'Examples: none attached';
+    const innerWidth = width - 24;
+    const titleHeight = document.heightOfString(title, { width: innerWidth });
+    const reasonHeight = document.heightOfString(row.reason, {
+      width: innerWidth,
+    });
+    const actionHeight = document.heightOfString(row.recommendedAction, {
+      width: innerWidth,
+    });
+    const productHeight = document.heightOfString(productLine, {
+      width: innerWidth,
+    });
+    const cardHeight = Math.max(
+      86,
+      titleHeight + reasonHeight + actionHeight + productHeight + 36,
+    );
+
+    this.ensureForecastPdfSpace(document, cardHeight + 10);
+    const x = document.x;
+    const y = document.y;
+    document.roundedRect(x, y, width, cardHeight, 10).fillAndStroke(accent.fill, accent.border);
+    document
+      .fillColor('#243022')
+      .fontSize(11)
+      .text(title, x + 12, y + 10, { width: innerWidth });
+    let cursorY = y + 14 + titleHeight;
+    document
+      .fillColor('#5d6d60')
+      .fontSize(10)
+      .text(row.reason, x + 12, cursorY, { width: innerWidth });
+    cursorY += reasonHeight + 6;
+    document
+      .fillColor('#6b7465')
+      .fontSize(9)
+      .text(row.recommendedAction, x + 12, cursorY, { width: innerWidth });
+    cursorY += actionHeight + 6;
+    document
+      .fillColor('#243022')
+      .fontSize(9)
+      .text(productLine, x + 12, cursorY, { width: innerWidth });
+    document.y = y + cardHeight + 12;
+  }
+
+  private groupExceptionWatchlist(exceptions: ExceptionRow[]) {
+    const grouped = new Map<
+      string,
+      {
+        exceptionType: string;
+        severity: ExceptionRow['severity'];
+        count: number;
+        reason: string;
+        recommendedAction: string;
+        sampleProducts: string[];
+      }
+    >();
+
+    exceptions.forEach((row) => {
+      const key = `${row.exception_type}|${row.severity}|${row.reason}`;
+      const existing = grouped.get(key) ?? {
+        exceptionType: row.exception_type,
+        severity: row.severity,
+        count: 0,
+        reason: row.reason,
+        recommendedAction: row.recommended_action,
+        sampleProducts: [] as string[],
+      };
+      existing.count += 1;
+      if (
+        row.product_name &&
+        !existing.sampleProducts.includes(row.product_name) &&
+        existing.sampleProducts.length < 4
+      ) {
+        existing.sampleProducts.push(row.product_name);
+      }
+      grouped.set(key, existing);
+    });
+
+    const severityRank = { HIGH: 3, MEDIUM: 2, LOW: 1 };
+    return [...grouped.values()].sort(
+      (left, right) =>
+        severityRank[right.severity] - severityRank[left.severity] ||
+        right.count - left.count,
+    );
+  }
+
+  private groupAiEvidence(rows: AiExplanationRow[]) {
+    const grouped = new Map<
+      string,
+      {
+        signalLabel: string;
+        count: number;
+        explanation: string;
+      }
+    >();
+
+    rows.forEach((row) => {
+      const existing = grouped.get(row.extracted_signal) ?? {
+        signalLabel: row.extracted_signal.replace(/_/g, ' '),
+        count: 0,
+        explanation: row.business_explanation,
+      };
+      existing.count += 1;
+      grouped.set(row.extracted_signal, existing);
+    });
+
+    return [...grouped.values()].sort((left, right) => right.count - left.count);
   }
 
   private drawForecastLineChart(
@@ -2171,6 +2784,7 @@ export class ForecastEngineService {
     incidents: SalesIncident[],
     dailyReports: DailyReport[],
     activityLogs: ActivityLog[],
+    visits: StoreVisit[],
     productById: Map<string, Product>,
     filters: ForecastFilters,
   ): AiExplanationRow[] {
@@ -2244,6 +2858,54 @@ export class ForecastEngineService {
       );
     }
 
+    for (const visit of visits) {
+      if (visit.status !== StoreVisitStatus.COMPLETED) {
+        continue;
+      }
+
+      const observedAt = visit.visitEndedAt ?? visit.visitStartedAt;
+      const signalDate = this.dateKey(observedAt);
+      addExplanation(
+        'store_visit_competitor',
+        visit.id,
+        signalDate,
+        visit.competitorNotes,
+        visit.territoryId,
+      );
+      addExplanation(
+        'store_visit_feedback',
+        visit.id,
+        signalDate,
+        [
+          visit.outletFeedback,
+          JSON.stringify(visit.outletFeedbackAnswersJson ?? []),
+          JSON.stringify(visit.promotionsJson ?? []),
+          JSON.stringify(visit.osaIssuesJson ?? []),
+        ].join(' '),
+        visit.territoryId,
+      );
+
+      if (visit.planogramOk === false) {
+        addExplanation(
+          'store_visit_planogram',
+          visit.id,
+          signalDate,
+          'Planogram not followed during the store visit, creating field-execution risk.',
+          visit.territoryId,
+        );
+      }
+
+      if (visit.posmOk === false) {
+        addExplanation(
+          'store_visit_posm',
+          visit.id,
+          signalDate,
+          'POSM missing or not compliant during the store visit, weakening promotion execution.',
+          visit.territoryId,
+        );
+      }
+    }
+
     return rows.sort((left, right) => right.confidence_score - left.confidence_score);
   }
 
@@ -2254,6 +2916,10 @@ export class ForecastEngineService {
       normalized.includes('stockout') ||
       normalized.includes('oos') ||
       normalized.includes('unavailable');
+    const hasOsa =
+      normalized.includes('osa') ||
+      normalized.includes('shelf') ||
+      normalized.includes('availability');
     const hasCompetitor =
       normalized.includes('competitor') ||
       normalized.includes('substitute') ||
@@ -2267,6 +2933,9 @@ export class ForecastEngineService {
       normalized.includes('promotion') ||
       normalized.includes('discount') ||
       normalized.includes('offer');
+    const hasExecutionViolation =
+      normalized.includes('planogram') ||
+      normalized.includes('posm');
 
     if (hasStockout && hasCompetitor) {
       return {
@@ -2301,6 +2970,28 @@ export class ForecastEngineService {
       };
     }
 
+    if (hasExecutionViolation) {
+      return {
+        signal: 'execution_compliance_risk',
+        severity: 'MEDIUM' as const,
+        confidence: 0.71,
+        reason: 'execution_compliance_risk',
+        explanation:
+          'Field text points to planogram or POSM execution gaps that can reduce visible demand or weaken promotion conversion.',
+      };
+    }
+
+    if (hasOsa) {
+      return {
+        signal: 'osa_execution_risk',
+        severity: 'MEDIUM' as const,
+        confidence: 0.7,
+        reason: 'osa_execution_risk',
+        explanation:
+          'Field text references OSA or shelf-availability issues, suggesting the observed movement may be suppressed by execution problems in-store.',
+      };
+    }
+
     if (hasPromotion) {
       return {
         signal: 'promotion_demand_shift',
@@ -2321,7 +3012,10 @@ export class ForecastEngineService {
     return Math.min(0.18, highSeverityCount * 0.04 + mediumSeverityCount * 0.02);
   }
 
-  private findProductMention(text: string, products: Product[]) {
+  private findProductMention(
+    text: string,
+    products: Array<Pick<Product, 'id' | 'productName' | 'sku'>>,
+  ) {
     const normalized = text.toLowerCase();
     return products.find((product) => {
       const productName = product.productName.toLowerCase();

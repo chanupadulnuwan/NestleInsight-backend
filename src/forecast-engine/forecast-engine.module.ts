@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { ActivityLog } from '../activity/entities/activity.entity';
+import { AiWriterService } from '../ai-writer/ai-writer.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { DailyReport } from '../daily-reports/entities/daily-report.entity';
@@ -32,7 +33,7 @@ import { ForecastEngineService } from './forecast-engine.service';
     ]),
   ],
   controllers: [ForecastEngineController],
-  providers: [ForecastEngineService, JwtAuthGuard, RolesGuard],
+  providers: [ForecastEngineService, AiWriterService, JwtAuthGuard, RolesGuard],
   exports: [ForecastEngineService],
 })
 export class ForecastEngineModule {}

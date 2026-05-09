@@ -4144,9 +4144,6 @@ export class InsightCenterService {
     }
     const left = document.page.margins.left;
     document.x = left;
-    const top = document.y;
-
-    const headerHeight = 40;
     const measuredRows = rows.map((row) => {
       document.fontSize(10)
       const titleHeight = document.heightOfString(row.title, {
@@ -4161,15 +4158,31 @@ export class InsightCenterService {
         height: Math.max(54, 22 + titleHeight + detailHeight),
       }
     })
-    const totalHeight =
-      headerHeight + measuredRows.reduce((sum, row) => sum + row.height + 8, 0)
-    this.ensurePdfSpace(document, totalHeight)
+    const headerHeight = 40
+    this.ensurePdfSpace(document, headerHeight + (measuredRows[0]?.height ?? 0) + 8)
 
-    document.fillColor('#243022').fontSize(14).text(title, left, top, { width });
-    document.fillColor('#5d6d60').fontSize(9).text(subtitle, left, top + 18, { width });
+    const drawHeader = (continued: boolean) => {
+      const headerTop = document.y
+      document.fillColor('#243022').fontSize(14).text(
+        continued ? `${title} (cont.)` : title,
+        left,
+        headerTop,
+        { width },
+      )
+      document.fillColor('#5d6d60').fontSize(9).text(subtitle, left, headerTop + 18, { width })
+      document.y = headerTop + headerHeight
+    }
 
-    let rowTop = top + 40;
+    drawHeader(false)
+
     for (const row of measuredRows) {
+      const previousY = document.y
+      this.ensurePdfSpace(document, row.height + 8)
+      if (document.y < previousY) {
+        drawHeader(true)
+        this.ensurePdfSpace(document, row.height + 8)
+      }
+      const rowTop = document.y
       document.roundedRect(left, rowTop, width, row.height, 10).fillAndStroke(fillColor, strokeColor);
       document.fillColor('#243022').fontSize(10).text(row.title, left + 12, rowTop + 10, {
         width: width - 120,
@@ -4181,10 +4194,9 @@ export class InsightCenterService {
       document.fillColor('#6d645c').fontSize(8.5).text(row.detail, left + 12, rowTop + 26, {
         width: width - 24,
       });
-      rowTop += row.height + 8;
+      document.y = rowTop + row.height + 8;
     }
-
-    document.y = rowTop + 2;
+    document.moveDown(0.1)
   }
 
   private drawInsightTrendChartV2(

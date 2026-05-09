@@ -45,7 +45,7 @@ export class AiWriterService {
     );
   }
 
-  async writeInsightCenterNarrative(
+  async writeNarrative(
     payload: InsightWriterRequest,
   ): Promise<InsightWriterResponse | null> {
     const url = this.configService.get<string>('INSIGHT_WRITER_URL')?.trim();
@@ -79,5 +79,11 @@ export class AiWriterService {
     }
 
     return (await response.json()) as InsightWriterResponse;
+  }
+
+  async writeInsightCenterNarrative(
+    payload: InsightWriterRequest,
+  ): Promise<InsightWriterResponse | null> {
+    return this.writeNarrative(payload);
   }
 }

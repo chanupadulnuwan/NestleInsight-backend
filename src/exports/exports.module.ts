@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ActivityLog } from '../activity/entities/activity.entity';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { DailyReport } from '../daily-reports/entities/daily-report.entity';
 import { Order } from '../orders/entities/order.entity';
 import { Outlet } from '../outlets/entities/outlet.entity';
 import { Product } from '../products/entities/product.entity';
@@ -27,6 +28,7 @@ import { ExportsService } from './exports.service';
   imports: [
     TypeOrmModule.forFeature([
       ActivityLog,
+      DailyReport,
       DeliveryAssignment,
       DeliveryAssignmentOrder,
       Order,

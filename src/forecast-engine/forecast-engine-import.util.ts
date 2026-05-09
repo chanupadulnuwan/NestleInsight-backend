@@ -37,12 +37,36 @@ export type ImportedInventorySnapshot = {
   snapshot_source: string;
 };
 
+export type ImportedFieldObservation = {
+  observation_id: string;
+  source_type: string;
+  source_id: string;
+  signal_date: string;
+  canonical_shop_id: string | null;
+  sales_rep_id: string | null;
+  territory_id: string | null;
+  warehouse_id: string | null;
+  route_id: string | null;
+  product_id: string | null;
+  product_name: string | null;
+  issue_tag: string;
+  issue_type: string;
+  severity_hint: string;
+  observation_text: string;
+  promotion_related: boolean;
+  competitor_related: boolean;
+  osa_related: boolean;
+  planogram_violation: boolean;
+  posm_violation: boolean;
+};
+
 export type ImportedForecastBundle = {
   packageName: string | null;
   generatedAt: string | null;
   products: ImportedPlannerProduct[];
   forecastRows: ImportedPlannerForecastRow[];
   inventorySnapshots: ImportedInventorySnapshot[];
+  fieldObservations: ImportedFieldObservation[];
 };
 
 type ParsedManifest = {
@@ -116,6 +140,9 @@ export function parseForecastExportBundle(buffer: Buffer): ImportedForecastBundl
   const retailRows = parseCsv(
     readEntryText(zip, 'forecast_estimated_retail_offtake.csv') ?? '',
   );
+  const fieldObservationRows = parseCsv(
+    readEntryText(zip, 'field_observations.csv') ?? '',
+  );
 
   const products = productRows
     .map<ImportedPlannerProduct>((row) => ({
@@ -178,5 +205,29 @@ export function parseForecastExportBundle(buffer: Buffer): ImportedForecastBundl
     products,
     forecastRows,
     inventorySnapshots,
+    fieldObservations: fieldObservationRows
+      .map<ImportedFieldObservation>((row) => ({
+        observation_id: row.observation_id?.trim() ?? '',
+        source_type: row.source_type?.trim() ?? '',
+        source_id: row.source_id?.trim() ?? '',
+        signal_date: row.signal_date?.trim() ?? '',
+        canonical_shop_id: readNullableText(row.canonical_shop_id),
+        sales_rep_id: readNullableText(row.sales_rep_id),
+        territory_id: readNullableText(row.territory_id),
+        warehouse_id: readNullableText(row.warehouse_id),
+        route_id: readNullableText(row.route_id),
+        product_id: readNullableText(row.product_id),
+        product_name: readNullableText(row.product_name),
+        issue_tag: row.issue_tag?.trim() ?? '',
+        issue_type: row.issue_type?.trim() ?? '',
+        severity_hint: row.severity_hint?.trim() ?? '',
+        observation_text: row.observation_text?.trim() ?? '',
+        promotion_related: readBoolean(row.promotion_related),
+        competitor_related: readBoolean(row.competitor_related),
+        osa_related: readBoolean(row.osa_related),
+        planogram_violation: readBoolean(row.planogram_violation),
+        posm_violation: readBoolean(row.posm_violation),
+      }))
+      .filter((row) => row.signal_date && row.observation_text),
   };
 }
