@@ -8,8 +8,12 @@ import {
   Post,
   Query,
   Req,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { buildPlannerReportAttachmentUrl, createPlannerReportUploadOptions } from './planner-report.storage';
 
 import { Roles } from '../auth/decorators/roles.decorator';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
@@ -98,8 +102,14 @@ export class ReportDashboardController {
   // --- Demand Planner Reports ---
 
   @Post('planner-reports')
-  createPlannerReport(@Req() req: any, @Body() dto: CreatePlannerReportDto) {
-    return this.service.createPlannerReport(req.user?.userId, dto);
+  @UseInterceptors(FileInterceptor('attachment', createPlannerReportUploadOptions()))
+  createPlannerReport(
+    @Req() req: any,
+    @Body() dto: CreatePlannerReportDto,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    const attachmentUrl = file ? buildPlannerReportAttachmentUrl(file.filename) : undefined;
+    return this.service.createPlannerReport(req.user?.userId, dto, attachmentUrl);
   }
 
   @Get('planner-reports')

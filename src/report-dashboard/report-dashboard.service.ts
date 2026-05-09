@@ -228,7 +228,7 @@ export class ReportDashboardService {
 
   // --- Demand Planner Reports ---
 
-  async createPlannerReport(authorId: string, dto: CreatePlannerReportDto) {
+  async createPlannerReport(authorId: string, dto: CreatePlannerReportDto, attachmentUrl?: string) {
     if (dto.isCritical && !dto.criticalReason?.trim()) {
       throw new BadRequestException('Critical reason is required when saving as critical.');
     }
@@ -239,6 +239,7 @@ export class ReportDashboardService {
       content: dto.content.trim(),
       isCritical: dto.isCritical ?? false,
       criticalReason: dto.isCritical ? dto.criticalReason!.trim() : null,
+      attachmentUrl: attachmentUrl ?? null,
     });
 
     return this.plannerReportRepo.save(report);

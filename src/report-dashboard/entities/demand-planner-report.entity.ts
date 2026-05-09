@@ -34,6 +34,9 @@ export class DemandPlannerReport {
   @Column({ name: 'critical_reason', type: 'text', nullable: true })
   criticalReason: string | null;
 
+  @Column({ name: 'attachment_url', type: 'varchar', length: 500, nullable: true })
+  attachmentUrl: string | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
