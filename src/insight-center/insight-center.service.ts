@@ -4,6 +4,8 @@ import PDFDocument from 'pdfkit';
 import { Repository } from 'typeorm';
 
 import { ActivityLog } from '../activity/entities/activity.entity';
+import { FeedbackSubmission } from '../activity/entities/feedback-submission.entity';
+import { OrderFeedback } from '../activity/entities/order-feedback.entity';
 import {
   AiWriterService,
   type InsightWriterRequest,
@@ -150,6 +152,8 @@ type StockoutEvent = {
   productName: string;
   territoryId: string | null;
   territoryName: string | null;
+  warehouseId: string | null;
+  warehouseName: string | null;
   observedAt: string;
   observedDate: string;
   stockUnits: number;
@@ -160,6 +164,11 @@ type LossEvent = {
   timestamp: Date;
   canonicalShopId: string;
   productId: string | null;
+  productName: string;
+  territoryId: string | null;
+  territoryName: string | null;
+  warehouseId: string | null;
+  warehouseName: string | null;
   lossType: 'DAMAGED' | 'EXPIRED';
   quantityUnits: number;
 };
@@ -210,8 +219,13 @@ type VisitRow = {
   territoryId: string | null;
   territoryName: string | null;
   warehouseId: string | null;
+  warehouseName: string | null;
+  salesRepName: string;
   competitorNotes: string | null;
   outletFeedback: string | null;
+  planogramOk: boolean | null;
+  posmOk: boolean | null;
+  outletFeedbackAnswers: Array<Record<string, unknown>>;
 };
 
 type FieldSignal = {
@@ -228,6 +242,62 @@ type FieldSignal = {
   summary: string;
 };
 
+type OsaIssueObservation = {
+  issueId: string;
+  observedDate: string;
+  canonicalShopId: string;
+  shopName: string;
+  territoryId: string | null;
+  territoryName: string | null;
+  warehouseId: string | null;
+  warehouseName: string | null;
+  productId: string | null;
+  productName: string | null;
+  issueTag: string;
+  notes: string;
+};
+
+type ShopFeedbackObservation = {
+  feedbackId: string;
+  feedbackDate: string;
+  canonicalShopId: string | null;
+  shopName: string;
+  territoryId: string | null;
+  territoryName: string | null;
+  warehouseId: string | null;
+  warehouseName: string | null;
+  rating: number | null;
+  comment: string;
+  sourceType: 'ORDER_FEEDBACK' | 'VISIT_FEEDBACK';
+};
+
+type ComplianceObservation = {
+  visitId: string;
+  observedDate: string;
+  canonicalShopId: string;
+  shopName: string;
+  territoryId: string | null;
+  territoryName: string | null;
+  warehouseId: string | null;
+  warehouseName: string | null;
+  violationType: 'PLANOGRAM' | 'POSM';
+};
+
+type SalesRepIssueObservation = {
+  issueId: string;
+  issueDate: string;
+  salesRepId: string | null;
+  salesRepName: string;
+  territoryId: string | null;
+  territoryName: string | null;
+  warehouseId: string | null;
+  warehouseName: string | null;
+  issueType: string;
+  severity: 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
+  summary: string;
+  sourceType: 'SALES_INCIDENT' | 'DAILY_REPORT';
+};
+
 type OperationalDataset = {
   orderEvents: DemandEvent[];
   allOrderEvents: DemandEvent[];
@@ -235,12 +305,17 @@ type OperationalDataset = {
   allDeliveryEvents: DeliveryEvent[];
   returnEvents: ReturnEvent[];
   allReturnEvents: ReturnEvent[];
+  lossEvents: LossEvent[];
   retailOfftakeRows: RetailOfftakeRow[];
   allRetailOfftakeRows: RetailOfftakeRow[];
   stockCounts: StockCountRow[];
   stockoutEvents: StockoutEvent[];
   visits: VisitRow[];
   fieldSignals: FieldSignal[];
+  osaIssues: OsaIssueObservation[];
+  shopFeedback: ShopFeedbackObservation[];
+  complianceViolations: ComplianceObservation[];
+  salesRepIssues: SalesRepIssueObservation[];
   shopsById: Map<string, ShopReference>;
   territories: Territory[];
   warehouses: Warehouse[];
@@ -295,6 +370,94 @@ type InsightReportNarrative = {
   callouts: string[];
 };
 
+type InsightPromotionProductImpactRow = {
+  product_id: string;
+  product_name: string;
+  promoted_ordered_cases: number;
+  promoted_estimated_retail_offtake_cases: number;
+  total_ordered_cases: number;
+  total_estimated_retail_offtake_cases: number;
+};
+
+type InsightProductDamageRow = {
+  product_id: string | null;
+  product_name: string;
+  damaged_units: number;
+  expired_units: number;
+  total_loss_units: number;
+};
+
+type InsightWarehouseDamageRow = {
+  warehouse_id: string | null;
+  warehouse_name: string;
+  damaged_units: number;
+  expired_units: number;
+  total_loss_units: number;
+  affected_products: number;
+};
+
+type InsightOsaIssueRow = {
+  label: string;
+  issue_type: string;
+  product_name: string | null;
+  warehouse_name: string;
+  issue_count: number;
+  affected_outlets: number;
+};
+
+type InsightCompetitorRiskVsSalesRow = {
+  label: string;
+  competitor_mentions: number;
+  ordered_cases: number;
+  estimated_retail_offtake_cases: number;
+};
+
+type InsightDissatisfiedShopRow = {
+  shop_name: string;
+  territory_name: string;
+  warehouse_name: string;
+  average_rating: number;
+  feedback_count: number;
+  latest_comment: string;
+};
+
+type InsightSalesRepIssueRow = {
+  sales_rep_name: string;
+  territory_name: string;
+  warehouse_name: string;
+  issue_count: number;
+  warehouse_issue_count: number;
+  route_issue_count: number;
+  critical_count: number;
+  dominant_issue: string;
+};
+
+type InsightComplianceViolationRow = {
+  shop_name: string;
+  territory_name: string;
+  warehouse_name: string;
+  violation_count: number;
+  planogram_failures: number;
+  posm_failures: number;
+};
+
+type InsightWarehouseRiskRow = {
+  warehouse_name: string;
+  delivery_gap_cases: number;
+  stockout_count: number;
+  damage_units: number;
+  warehouse_issue_count: number;
+  risk_score: number;
+};
+
+type InsightRecommendedActionRow = {
+  title: string;
+  owner: string;
+  priority: 'HIGH' | 'MEDIUM' | 'LOW';
+  reason: string;
+  metric: string;
+};
+
 const ORDER_DEMAND_STATUSES = new Set([
   'PLACED',
   'APPROVED',
@@ -312,6 +475,8 @@ export class InsightCenterService {
   constructor(
     @InjectRepository(ActivityLog)
     private readonly activityLogsRepo: Repository<ActivityLog>,
+    @InjectRepository(FeedbackSubmission)
+    private readonly feedbackSubmissionsRepo: Repository<FeedbackSubmission>,
     @InjectRepository(DailyReport)
     private readonly dailyReportsRepo: Repository<DailyReport>,
     @InjectRepository(DeliveryAssignment)
@@ -320,6 +485,8 @@ export class InsightCenterService {
     private readonly assignmentOrdersRepo: Repository<DeliveryAssignmentOrder>,
     @InjectRepository(Order)
     private readonly ordersRepo: Repository<Order>,
+    @InjectRepository(OrderFeedback)
+    private readonly orderFeedbacksRepo: Repository<OrderFeedback>,
     @InjectRepository(OrderReturn)
     private readonly orderReturnsRepo: Repository<OrderReturn>,
     @InjectRepository(Outlet)
@@ -395,6 +562,7 @@ export class InsightCenterService {
   }
 
   async generateCsvReport(query: InsightCenterQuery) {
+    this.ensureExplicitReportWindow(query);
     const dashboard = await this.generateDashboard(query);
     const filename = `demand_planner_insight_center_${dashboard.summary.generatedAt.slice(0, 10)}.csv`;
     const rows = this.buildReportRows(dashboard);
@@ -406,6 +574,7 @@ export class InsightCenterService {
   }
 
   async generatePdfReport(query: InsightCenterQuery) {
+    this.ensureExplicitReportWindow(query);
     const dashboard = await this.generateDashboard(query);
     const filename = `demand_planner_insight_center_${dashboard.summary.generatedAt.slice(0, 10)}.pdf`;
     const narrative = await this.buildInsightReportNarrative(dashboard);
@@ -428,7 +597,7 @@ export class InsightCenterService {
     }));
 
     return {
-      periods: ['7d', '30d', '90d', 'ytd', 'custom'],
+      periods: ['7d', '30d', '90d', '180d', '365d', 'ytd', 'custom'],
       granularities: ['daily', 'weekly', 'monthly'],
       demandTypes: ['all', 'replenishment', 'estimated_retail_offtake'],
       viewModes: ['absolute', 'normalized', 'confidence_adjusted'],
@@ -454,8 +623,10 @@ export class InsightCenterService {
   ): Promise<OperationalDataset> {
     const [
       activityLogs,
+      feedbackSubmissions,
       assignments,
       assignmentOrders,
+      orderFeedbacks,
       orders,
       orderReturns,
       outlets,
@@ -471,6 +642,7 @@ export class InsightCenterService {
       warehouses,
     ] = await Promise.all([
       this.activityLogsRepo.find({ order: { createdAt: 'ASC' } }),
+      this.feedbackSubmissionsRepo.find({ order: { createdAt: 'ASC' } }),
       this.assignmentsRepo.find({
         relations: {
           assignmentOrders: {
@@ -480,6 +652,10 @@ export class InsightCenterService {
         order: { createdAt: 'ASC' },
       }),
       this.assignmentOrdersRepo.find({ relations: { assignment: true } }),
+      this.orderFeedbacksRepo.find({
+        relations: { order: true, shopOwner: true },
+        order: { createdAt: 'ASC' },
+      }),
       this.ordersRepo.find({
         relations: {
           user: true,
@@ -499,7 +675,10 @@ export class InsightCenterService {
       this.promotionProductsRepo.find(),
       this.promotionTerritoriesRepo.find(),
       this.salesIncidentsRepo.find({ order: { createdAt: 'ASC' } }),
-      this.dailyReportsRepo.find({ order: { reportDate: 'ASC' } }),
+      this.dailyReportsRepo.find({
+        relations: { salesRep: true },
+        order: { reportDate: 'ASC' },
+      }),
       this.storeVisitsRepo.find({
         relations: { salesRep: true, route: true },
         order: { visitStartedAt: 'ASC' },
@@ -519,6 +698,7 @@ export class InsightCenterService {
     const warehouseById = new Map(
       warehouses.map((warehouse) => [warehouse.id, warehouse]),
     );
+    const userById = new Map(users.map((user) => [user.id, user]));
     const shopOwners = users.filter((user) => user.role === Role.SHOP_OWNER);
     const shopContext = this.createShopReferenceContext(
       outlets,
@@ -579,10 +759,13 @@ export class InsightCenterService {
       lossEvents,
       visitRows,
       visitFieldSignals,
+      osaIssueRows,
+      complianceRows,
     } = this.buildVisitSignals(
       visits,
       productById,
       territoryById,
+      warehouseById,
       shopContext,
       filters,
     );
@@ -602,6 +785,22 @@ export class InsightCenterService {
       dailyReports,
       activityLogs,
       products,
+      filters,
+    );
+    const allShopFeedback = this.buildShopFeedbackRows(
+      orderFeedbacks,
+      feedbackSubmissions,
+      visitRows,
+      users,
+      orderInfos,
+      shopContext,
+      filters,
+    );
+    const allSalesRepIssues = this.buildSalesRepIssueRows(
+      incidents,
+      dailyReports,
+      users,
+      shopContext,
       filters,
     );
 
@@ -641,10 +840,35 @@ export class InsightCenterService {
         this.isInRange(event.observedAt, filters) &&
         this.matchesFilters(event, filters),
     );
+    const filteredLossEvents = lossEvents.filter(
+      (event) =>
+        this.isInRange(event.timestamp, filters) &&
+        this.matchesFilters(event, filters),
+    );
     const filteredVisits = visitRows.filter(
       (visit) =>
         this.isInRange(visit.timestamp, filters) &&
         this.matchesFilters(visit, filters),
+    );
+    const filteredOsaIssues = osaIssueRows.filter(
+      (row) =>
+        this.isInRange(row.observedDate, filters) &&
+        this.matchesFilters(row, filters),
+    );
+    const filteredShopFeedback = allShopFeedback.filter(
+      (row) =>
+        this.isInRange(row.feedbackDate, filters) &&
+        this.matchesFilters(row, filters),
+    );
+    const filteredComplianceRows = complianceRows.filter(
+      (row) =>
+        this.isInRange(row.observedDate, filters) &&
+        this.matchesFilters(row, filters),
+    );
+    const filteredSalesRepIssues = allSalesRepIssues.filter(
+      (row) =>
+        this.isInRange(row.issueDate, filters) &&
+        this.matchesFilters(row, filters),
     );
 
     return {
@@ -654,6 +878,7 @@ export class InsightCenterService {
       allDeliveryEvents,
       returnEvents: filteredReturnEvents,
       allReturnEvents,
+      lossEvents: filteredLossEvents,
       retailOfftakeRows: filteredRetailOfftakeRows,
       allRetailOfftakeRows,
       stockCounts: filteredStockCounts,
@@ -664,6 +889,10 @@ export class InsightCenterService {
           this.isInRange(signal.signalDate, filters) &&
           this.matchesFilters(signal, filters),
       ),
+      osaIssues: filteredOsaIssues,
+      shopFeedback: filteredShopFeedback,
+      complianceViolations: filteredComplianceRows,
+      salesRepIssues: filteredSalesRepIssues,
       shopsById: shopContext.rowsByCanonicalId,
       territories,
       warehouses,
@@ -852,6 +1081,7 @@ export class InsightCenterService {
     visits: StoreVisit[],
     productById: Map<string, Product>,
     territoryById: Map<string, Territory>,
+    warehouseById: Map<string, Warehouse>,
     shopContext: ShopReferenceContext,
     filters: InsightFilters,
   ) {
@@ -860,6 +1090,8 @@ export class InsightCenterService {
     const lossEvents: LossEvent[] = [];
     const visitRows: VisitRow[] = [];
     const visitFieldSignals: FieldSignal[] = [];
+    const osaIssueRows: OsaIssueObservation[] = [];
+    const complianceRows: ComplianceObservation[] = [];
 
     for (const visit of visits) {
       if (visit.status !== StoreVisitStatus.COMPLETED) {
@@ -877,6 +1109,16 @@ export class InsightCenterService {
         : null;
       const territoryName = territory?.name ?? shop?.territoryName ?? null;
       const warehouseId = visit.route?.warehouseId ?? shop?.warehouseId ?? null;
+      const warehouseName = warehouseId
+        ? warehouseById.get(warehouseId)?.name ?? shop?.warehouseName ?? null
+        : shop?.warehouseName ?? null;
+      const outletFeedbackAnswers = Array.isArray(visit.outletFeedbackAnswersJson)
+        ? visit.outletFeedbackAnswersJson
+        : [];
+      const salesRepName =
+        `${visit.salesRep?.firstName ?? ''} ${visit.salesRep?.lastName ?? ''}`.trim() ||
+        visit.salesRep?.username ||
+        'Unknown sales rep';
 
       const visitRow: VisitRow = {
         visitId: visit.id,
@@ -889,12 +1131,25 @@ export class InsightCenterService {
         territoryId: visit.territoryId ?? shop?.territoryId ?? null,
         territoryName,
         warehouseId,
+        warehouseName,
+        salesRepName,
         competitorNotes: visit.competitorNotes,
         outletFeedback: visit.outletFeedback,
+        planogramOk: visit.planogramOk,
+        posmOk: visit.posmOk,
+        outletFeedbackAnswers,
       };
       visitRows.push(visitRow);
 
       this.addVisitFieldSignals(visitRow, visitFieldSignals, filters);
+      this.addVisitOsaIssues(
+        visit,
+        visitRow,
+        productById,
+        warehouseName,
+        osaIssueRows,
+      );
+      this.addComplianceViolations(visitRow, complianceRows);
 
       const stockItems = Array.isArray(visit.shelfStockJson)
         ? visit.shelfStockJson
@@ -955,6 +1210,8 @@ export class InsightCenterService {
             productName,
             territoryId: visitRow.territoryId,
             territoryName,
+            warehouseId,
+            warehouseName,
             observedAt: observedAt.toISOString(),
             observedDate,
             stockUnits: currentStockUnits,
@@ -963,7 +1220,14 @@ export class InsightCenterService {
         }
       }
 
-      this.addLossEvents(visit, productById, canonicalShopId, observedAt, lossEvents);
+      this.addLossEvents(
+        visit,
+        productById,
+        canonicalShopId,
+        observedAt,
+        visitRow,
+        lossEvents,
+      );
     }
 
     return {
@@ -972,6 +1236,8 @@ export class InsightCenterService {
       lossEvents,
       visitRows,
       visitFieldSignals,
+      osaIssueRows,
+      complianceRows,
     };
   }
 
@@ -1220,6 +1486,13 @@ export class InsightCenterService {
     const averageRetailSignalConfidence = this.average(
       dataset.retailOfftakeRows.map((row) => row.confidenceScore),
     );
+    const totalDamageUnits = this.sum(dataset.lossEvents, 'quantityUnits');
+    const competitorPressureScore = this.calculateCompetitorPressure(dataset);
+    const dissatisfiedShops = new Set(
+      dataset.shopFeedback
+        .filter((row) => row.rating !== null && (row.rating ?? 0) <= 2)
+        .map((row) => row.canonicalShopId ?? row.shopName),
+    ).size;
 
     return [
       {
@@ -1322,6 +1595,51 @@ export class InsightCenterService {
         confidenceScore: null,
         caption: 'Average confidence across estimated retail-offtake intervals.',
       },
+      {
+        key: 'damage_units_flagged',
+        label: 'Damage units flagged',
+        value: this.roundNumber(totalDamageUnits),
+        unit: 'units',
+        sourceType: 'exact',
+        confidenceScore: null,
+        caption: 'Damaged or expired units captured through sales-rep visit evidence.',
+      },
+      {
+        key: 'osa_issue_count',
+        label: 'OSA issues',
+        value: dataset.osaIssues.length,
+        unit: 'issues',
+        sourceType: 'exact',
+        confidenceScore: null,
+        caption: 'Out-of-stock and availability issues captured by sales reps in the selected window.',
+      },
+      {
+        key: 'competitor_pressure_score',
+        label: 'Competitor pressure score',
+        value: competitorPressureScore,
+        unit: 'score',
+        sourceType: 'hybrid',
+        confidenceScore: null,
+        caption: 'Signal score built from competitor and substitution notes in visits and reports.',
+      },
+      {
+        key: 'dissatisfied_shops',
+        label: 'Dissatisfied shops',
+        value: dissatisfiedShops,
+        unit: 'shops',
+        sourceType: 'exact',
+        confidenceScore: null,
+        caption: 'Shops with weak feedback ratings in the selected time window.',
+      },
+      {
+        key: 'compliance_violations',
+        label: 'Marketing rule violations',
+        value: dataset.complianceViolations.length,
+        unit: 'violations',
+        sourceType: 'exact',
+        confidenceScore: null,
+        caption: 'Planogram or POSM violations captured during store visits.',
+      },
     ];
   }
 
@@ -1362,15 +1680,25 @@ export class InsightCenterService {
       territoryHeatmap: this.buildTerritoryHeatmap(dataset),
       demandSplit: this.buildDemandSplit(dataset),
       promotionImpact: this.buildPromotionImpact(dataset),
+      promotionProductImpact: this.buildPromotionProductImpact(dataset),
       productMomentum: this.buildProductMomentum(dataset),
       customerSalesByProduct: this.buildCustomerSalesByProduct(dataset),
       orderVsCustomerSales: this.buildOrderVsCustomerSales(dataset),
       stockoutImpact: this.buildStockoutImpact(dataset),
+      damageByProduct: this.buildDamageByProduct(dataset),
+      damageByWarehouse: this.buildDamageByWarehouse(dataset),
+      osaIssues: this.buildOsaIssuePressure(dataset),
       competitorPressure: this.buildCompetitorPressure(dataset),
+      competitorRiskVsSales: this.buildCompetitorRiskVsSales(dataset),
       feedbackThemes: this.buildFeedbackThemes(dataset),
+      dissatisfiedShops: this.buildDissatisfiedShops(dataset),
+      complianceViolations: this.buildComplianceViolations(dataset),
+      salesRepIssues: this.buildSalesRepIssuePressure(dataset),
+      warehouseRisk: this.buildWarehouseRisk(dataset),
       visitCoverageConfidence: this.buildVisitCoverage(dataset, filters),
       waterfall: this.buildWaterfall(dataset, forecastDataset),
       exceptions: this.buildExceptions(dataset, forecastDataset),
+      recommendedActions: this.buildRecommendedActions(dataset, forecastDataset),
     };
   }
 
@@ -1508,9 +1836,17 @@ export class InsightCenterService {
       .filter((row) => row.demand_signal_cases > 0)
       .sort((left, right) => right.demand_signal_cases - left.demand_signal_cases);
 
+    const highest = ranked.slice(0, Math.min(5, ranked.length));
+    const highestIds = new Set(highest.map((row) => row.product_id));
+    const lowestPool = ranked.filter((row) => !highestIds.has(row.product_id));
+    const lowestSource = lowestPool.length > 0 ? lowestPool : ranked;
+    const lowest = lowestSource
+      .slice(Math.max(0, lowestSource.length - 5))
+      .sort((left, right) => left.demand_signal_cases - right.demand_signal_cases);
+
     return {
-      highest: ranked.slice(0, 5),
-      lowest: [...ranked].reverse().slice(0, 5).reverse(),
+      highest,
+      lowest,
     };
   }
 
@@ -1761,6 +2097,70 @@ export class InsightCenterService {
     ];
   }
 
+  private buildPromotionProductImpact(
+    dataset: OperationalDataset,
+  ): InsightPromotionProductImpactRow[] {
+    const grouped = new Map<string, InsightPromotionProductImpactRow>();
+
+    const ensure = (productId: string, productName: string) => {
+      const existing = grouped.get(productId);
+      if (existing) {
+        return existing;
+      }
+      const next: InsightPromotionProductImpactRow = {
+        product_id: productId,
+        product_name: productName,
+        promoted_ordered_cases: 0,
+        promoted_estimated_retail_offtake_cases: 0,
+        total_ordered_cases: 0,
+        total_estimated_retail_offtake_cases: 0,
+      };
+      grouped.set(productId, next);
+      return next;
+    };
+
+    for (const event of dataset.orderEvents) {
+      const row = ensure(event.productId, event.productName);
+      row.total_ordered_cases += event.quantityCases;
+      if (event.promotionFlag) {
+        row.promoted_ordered_cases += event.quantityCases;
+      }
+    }
+
+    for (const row of dataset.retailOfftakeRows) {
+      const target = ensure(row.productId, row.productName);
+      target.total_estimated_retail_offtake_cases += row.estimatedSoldCases;
+      if (row.promotionFlag) {
+        target.promoted_estimated_retail_offtake_cases += row.estimatedSoldCases;
+      }
+    }
+
+    return [...grouped.values()]
+      .map((row) => ({
+        ...row,
+        promoted_ordered_cases: this.roundNumber(row.promoted_ordered_cases),
+        promoted_estimated_retail_offtake_cases: this.roundNumber(
+          row.promoted_estimated_retail_offtake_cases,
+        ),
+        total_ordered_cases: this.roundNumber(row.total_ordered_cases),
+        total_estimated_retail_offtake_cases: this.roundNumber(
+          row.total_estimated_retail_offtake_cases,
+        ),
+      }))
+      .filter(
+        (row) =>
+          row.promoted_ordered_cases > 0 ||
+          row.promoted_estimated_retail_offtake_cases > 0,
+      )
+      .sort(
+        (left, right) =>
+          right.promoted_ordered_cases +
+          right.promoted_estimated_retail_offtake_cases -
+          (left.promoted_ordered_cases + left.promoted_estimated_retail_offtake_cases),
+      )
+      .slice(0, 8);
+  }
+
   private buildStockoutImpact(dataset: OperationalDataset) {
     const avgEstimatedCases =
       dataset.retailOfftakeRows.length > 0
@@ -1802,6 +2202,141 @@ export class InsightCenterService {
       .slice(0, 12);
   }
 
+  private buildDamageByProduct(
+    dataset: OperationalDataset,
+  ): InsightProductDamageRow[] {
+    const grouped = new Map<
+      string,
+      { product_id: string | null; product_name: string; damaged_units: number; expired_units: number }
+    >();
+
+    for (const row of dataset.lossEvents) {
+      const key = row.productId ?? row.productName;
+      const existing =
+        grouped.get(key) ??
+        {
+          product_id: row.productId,
+          product_name: row.productName,
+          damaged_units: 0,
+          expired_units: 0,
+        };
+      if (row.lossType === 'DAMAGED') {
+        existing.damaged_units += row.quantityUnits;
+      } else {
+        existing.expired_units += row.quantityUnits;
+      }
+      grouped.set(key, existing);
+    }
+
+    return [...grouped.values()]
+      .map((row) => ({
+        ...row,
+        damaged_units: this.roundNumber(row.damaged_units),
+        expired_units: this.roundNumber(row.expired_units),
+        total_loss_units: this.roundNumber(row.damaged_units + row.expired_units),
+      }))
+      .sort((left, right) => right.total_loss_units - left.total_loss_units)
+      .slice(0, 8);
+  }
+
+  private buildDamageByWarehouse(
+    dataset: OperationalDataset,
+  ): InsightWarehouseDamageRow[] {
+    const grouped = new Map<
+      string,
+      {
+        warehouse_id: string | null;
+        warehouse_name: string;
+        damaged_units: number;
+        expired_units: number;
+        products: Set<string>;
+      }
+    >();
+
+    for (const row of dataset.lossEvents) {
+      const key = row.warehouseId ?? row.warehouseName ?? 'Unassigned';
+      const existing =
+        grouped.get(key) ??
+        {
+          warehouse_id: row.warehouseId,
+          warehouse_name: row.warehouseName ?? 'Unassigned',
+          damaged_units: 0,
+          expired_units: 0,
+          products: new Set<string>(),
+        };
+      if (row.productId) {
+        existing.products.add(row.productId);
+      } else {
+        existing.products.add(row.productName);
+      }
+      if (row.lossType === 'DAMAGED') {
+        existing.damaged_units += row.quantityUnits;
+      } else {
+        existing.expired_units += row.quantityUnits;
+      }
+      grouped.set(key, existing);
+    }
+
+    return [...grouped.values()]
+      .map((row) => ({
+        warehouse_id: row.warehouse_id,
+        warehouse_name: row.warehouse_name,
+        damaged_units: this.roundNumber(row.damaged_units),
+        expired_units: this.roundNumber(row.expired_units),
+        total_loss_units: this.roundNumber(row.damaged_units + row.expired_units),
+        affected_products: row.products.size,
+      }))
+      .sort((left, right) => right.total_loss_units - left.total_loss_units)
+      .slice(0, 8);
+  }
+
+  private buildOsaIssuePressure(
+    dataset: OperationalDataset,
+  ): InsightOsaIssueRow[] {
+    const grouped = new Map<
+      string,
+      {
+        label: string;
+        issue_type: string;
+        product_name: string | null;
+        warehouse_name: string;
+        issue_count: number;
+        outlets: Set<string>;
+      }
+    >();
+
+    for (const row of dataset.osaIssues) {
+      const key = `${row.issueTag}|${row.productId ?? row.productName ?? 'none'}|${row.warehouseId ?? row.warehouseName ?? 'none'}`;
+      const existing =
+        grouped.get(key) ??
+        {
+          label: row.productName
+            ? `${row.issueTag} - ${row.productName}`
+            : row.issueTag,
+          issue_type: row.issueTag,
+          product_name: row.productName,
+          warehouse_name: row.warehouseName ?? 'Unassigned',
+          issue_count: 0,
+          outlets: new Set<string>(),
+        };
+      existing.issue_count += 1;
+      existing.outlets.add(row.canonicalShopId);
+      grouped.set(key, existing);
+    }
+
+    return [...grouped.values()]
+      .map((row) => ({
+        label: row.label,
+        issue_type: row.issue_type,
+        product_name: row.product_name,
+        warehouse_name: row.warehouse_name,
+        issue_count: row.issue_count,
+        affected_outlets: row.outlets.size,
+      }))
+      .sort((left, right) => right.issue_count - left.issue_count)
+      .slice(0, 10);
+  }
+
   private buildCompetitorPressure(dataset: OperationalDataset) {
     const grouped = new Map<string, { label: string; mentions: number; high_severity: number }>();
 
@@ -1824,10 +2359,60 @@ export class InsightCenterService {
     return [...grouped.values()].sort((left, right) => right.mentions - left.mentions);
   }
 
+  private buildCompetitorRiskVsSales(
+    dataset: OperationalDataset,
+  ): InsightCompetitorRiskVsSalesRow[] {
+    const grouped = new Map<
+      string,
+      InsightCompetitorRiskVsSalesRow
+    >();
+
+    const ensure = (label: string) => {
+      const existing = grouped.get(label);
+      if (existing) {
+        return existing;
+      }
+      const next: InsightCompetitorRiskVsSalesRow = {
+        label,
+        competitor_mentions: 0,
+        ordered_cases: 0,
+        estimated_retail_offtake_cases: 0,
+      };
+      grouped.set(label, next);
+      return next;
+    };
+
+    for (const signal of dataset.fieldSignals.filter((row) =>
+      row.signalType.includes('competitor'),
+    )) {
+      ensure(signal.territoryName ?? 'Unassigned').competitor_mentions += 1;
+    }
+
+    for (const event of dataset.orderEvents) {
+      ensure(event.territoryName ?? 'Unassigned').ordered_cases += event.quantityCases;
+    }
+
+    for (const row of dataset.retailOfftakeRows) {
+      ensure(row.territoryName ?? 'Unassigned').estimated_retail_offtake_cases +=
+        row.estimatedSoldCases;
+    }
+
+    return [...grouped.values()]
+      .map((row) => ({
+        ...row,
+        ordered_cases: this.roundNumber(row.ordered_cases),
+        estimated_retail_offtake_cases: this.roundNumber(
+          row.estimated_retail_offtake_cases,
+        ),
+      }))
+      .sort((left, right) => right.competitor_mentions - left.competitor_mentions)
+      .slice(0, 8);
+  }
+
   private buildFeedbackThemes(dataset: OperationalDataset) {
     const themes = new Map<string, number>();
-    for (const visit of dataset.visits) {
-      const text = `${visit.outletFeedback ?? ''} ${visit.competitorNotes ?? ''}`.toLowerCase();
+    for (const feedback of dataset.shopFeedback) {
+      const text = feedback.comment.toLowerCase();
       const add = (theme: string) => themes.set(theme, (themes.get(theme) ?? 0) + 1);
       if (text.includes('late') || text.includes('delay')) add('Late delivery');
       if (text.includes('stock') || text.includes('unavailable')) add('Unavailable stock');
@@ -1840,6 +2425,223 @@ export class InsightCenterService {
     return [...themes.entries()]
       .map(([theme, count]) => ({ theme, count }))
       .sort((left, right) => right.count - left.count);
+  }
+
+  private buildDissatisfiedShops(
+    dataset: OperationalDataset,
+  ): InsightDissatisfiedShopRow[] {
+    const grouped = new Map<
+      string,
+      {
+        shop_name: string;
+        territory_name: string;
+        warehouse_name: string;
+        ratings: number[];
+        feedback_count: number;
+        latest_comment: string;
+      }
+    >();
+
+    for (const row of dataset.shopFeedback.filter((item) => item.rating !== null)) {
+      const key = row.canonicalShopId ?? row.shopName;
+      const existing =
+        grouped.get(key) ??
+        {
+          shop_name: row.shopName,
+          territory_name: row.territoryName ?? 'Unassigned',
+          warehouse_name: row.warehouseName ?? 'Unassigned',
+          ratings: [] as number[],
+          feedback_count: 0,
+          latest_comment: '',
+        };
+      if (row.rating !== null) {
+        existing.ratings.push(row.rating);
+      }
+      existing.feedback_count += 1;
+      if (row.comment && !existing.latest_comment) {
+        existing.latest_comment = row.comment;
+      }
+      grouped.set(key, existing);
+    }
+
+    return [...grouped.values()]
+      .map((row) => ({
+        shop_name: row.shop_name,
+        territory_name: row.territory_name,
+        warehouse_name: row.warehouse_name,
+        average_rating: this.roundNumber(this.average(row.ratings)),
+        feedback_count: row.feedback_count,
+        latest_comment: row.latest_comment,
+      }))
+      .sort((left, right) => left.average_rating - right.average_rating)
+      .slice(0, 8);
+  }
+
+  private buildComplianceViolations(
+    dataset: OperationalDataset,
+  ): InsightComplianceViolationRow[] {
+    const grouped = new Map<
+      string,
+      InsightComplianceViolationRow
+    >();
+
+    for (const row of dataset.complianceViolations) {
+      const key = row.canonicalShopId;
+      const existing =
+        grouped.get(key) ??
+        {
+          shop_name: row.shopName,
+          territory_name: row.territoryName ?? 'Unassigned',
+          warehouse_name: row.warehouseName ?? 'Unassigned',
+          violation_count: 0,
+          planogram_failures: 0,
+          posm_failures: 0,
+        };
+      existing.violation_count += 1;
+      if (row.violationType === 'PLANOGRAM') {
+        existing.planogram_failures += 1;
+      } else {
+        existing.posm_failures += 1;
+      }
+      grouped.set(key, existing);
+    }
+
+    return [...grouped.values()]
+      .sort((left, right) => right.violation_count - left.violation_count)
+      .slice(0, 8);
+  }
+
+  private buildSalesRepIssuePressure(
+    dataset: OperationalDataset,
+  ): InsightSalesRepIssueRow[] {
+    const grouped = new Map<
+      string,
+      {
+        sales_rep_name: string;
+        territory_name: string;
+        warehouse_name: string;
+        issue_count: number;
+        warehouse_issue_count: number;
+        route_issue_count: number;
+        critical_count: number;
+        typeCounts: Map<string, number>;
+      }
+    >();
+
+    for (const row of dataset.salesRepIssues) {
+      const key = row.salesRepId ?? row.salesRepName;
+      const existing =
+        grouped.get(key) ??
+        {
+          sales_rep_name: row.salesRepName,
+          territory_name: row.territoryName ?? 'Unassigned',
+          warehouse_name: row.warehouseName ?? 'Unassigned',
+          issue_count: 0,
+          warehouse_issue_count: 0,
+          route_issue_count: 0,
+          critical_count: 0,
+          typeCounts: new Map<string, number>(),
+        };
+      existing.issue_count += 1;
+      existing.warehouse_issue_count += row.issueType.includes('WAREHOUSE') ? 1 : 0;
+      existing.route_issue_count += row.issueType.includes('ROUTE') ? 1 : 0;
+      existing.critical_count += row.severity === 'CRITICAL' ? 1 : 0;
+      existing.typeCounts.set(
+        row.issueType,
+        (existing.typeCounts.get(row.issueType) ?? 0) + 1,
+      );
+      grouped.set(key, existing);
+    }
+
+    return [...grouped.values()]
+      .map((row) => ({
+        sales_rep_name: row.sales_rep_name,
+        territory_name: row.territory_name,
+        warehouse_name: row.warehouse_name,
+        issue_count: row.issue_count,
+        warehouse_issue_count: row.warehouse_issue_count,
+        route_issue_count: row.route_issue_count,
+        critical_count: row.critical_count,
+        dominant_issue:
+          [...row.typeCounts.entries()].sort((left, right) => right[1] - left[1])[0]?.[0] ??
+          'GENERAL_ISSUE',
+      }))
+      .sort((left, right) => right.issue_count - left.issue_count)
+      .slice(0, 8);
+  }
+
+  private buildWarehouseRisk(
+    dataset: OperationalDataset,
+  ): InsightWarehouseRiskRow[] {
+    const grouped = new Map<
+      string,
+      {
+        warehouse_name: string;
+        ordered_cases: number;
+        delivered_cases: number;
+        stockout_count: number;
+        damage_units: number;
+        warehouse_issue_count: number;
+      }
+    >();
+
+    const ensure = (warehouseName: string | null | undefined) => {
+      const label = warehouseName ?? 'Unassigned';
+      const existing = grouped.get(label);
+      if (existing) {
+        return existing;
+      }
+      const next = {
+        warehouse_name: label,
+        ordered_cases: 0,
+        delivered_cases: 0,
+        stockout_count: 0,
+        damage_units: 0,
+        warehouse_issue_count: 0,
+      };
+      grouped.set(label, next);
+      return next;
+    };
+
+    for (const event of dataset.orderEvents) {
+      ensure(this.lookupWarehouseName(dataset, event.warehouseId)).ordered_cases +=
+        event.quantityCases;
+    }
+    for (const event of dataset.deliveryEvents) {
+      ensure(this.lookupWarehouseName(dataset, event.warehouseId)).delivered_cases +=
+        event.quantityCases;
+    }
+    for (const event of dataset.stockoutEvents) {
+      ensure(this.lookupWarehouseName(dataset, event.warehouseId)).stockout_count += 1;
+    }
+    for (const row of dataset.lossEvents) {
+      ensure(row.warehouseName).damage_units += row.quantityUnits;
+    }
+    for (const row of dataset.salesRepIssues) {
+      if (row.issueType.includes('WAREHOUSE')) {
+        ensure(row.warehouseName).warehouse_issue_count += 1;
+      }
+    }
+
+    return [...grouped.values()]
+      .map((row) => {
+        const deliveryGap = Math.max(0, row.ordered_cases - row.delivered_cases);
+        return {
+          warehouse_name: row.warehouse_name,
+          delivery_gap_cases: this.roundNumber(deliveryGap),
+          stockout_count: row.stockout_count,
+          damage_units: this.roundNumber(row.damage_units),
+          warehouse_issue_count: row.warehouse_issue_count,
+          risk_score: this.roundNumber(
+            deliveryGap * 0.2 +
+              row.stockout_count * 1.5 +
+              row.damage_units * 0.05 +
+              row.warehouse_issue_count * 2,
+          ),
+        };
+      })
+      .sort((left, right) => right.risk_score - left.risk_score)
+      .slice(0, 8);
   }
 
   private buildVisitCoverage(dataset: OperationalDataset, filters: InsightFilters) {
@@ -1945,28 +2747,181 @@ export class InsightCenterService {
     dataset: OperationalDataset,
     forecastDataset: ForecastDataset,
   ) {
-    const exceptions = forecastDataset.exceptions.slice(0, 12).map((row) => ({
-      severity: row.severity,
-      exception_type: row.exception_type,
-      reason: row.reason,
-      recommended_action: row.recommended_action,
-    }));
+    const grouped = new Map<
+      string,
+      {
+        severity: 'LOW' | 'MEDIUM' | 'HIGH';
+        exception_type: string;
+        recommended_action: string;
+        reasons: Set<string>;
+        count: number;
+      }
+    >();
+
+    const pushException = (
+      severity: 'LOW' | 'MEDIUM' | 'HIGH',
+      exceptionType: string,
+      reason: string,
+      recommendedAction: string,
+    ) => {
+      const key = `${exceptionType}|${recommendedAction}`;
+      const existing =
+        grouped.get(key) ??
+        {
+          severity,
+          exception_type: exceptionType,
+          recommended_action: recommendedAction,
+          reasons: new Set<string>(),
+          count: 0,
+        };
+      existing.count += 1;
+      existing.reasons.add(reason);
+      if (this.exceptionSeverityWeight(severity) > this.exceptionSeverityWeight(existing.severity)) {
+        existing.severity = severity;
+      }
+      grouped.set(key, existing);
+    };
+
+    for (const row of forecastDataset.exceptions.slice(0, 40)) {
+      pushException(row.severity, row.exception_type, row.reason, row.recommended_action);
+    }
 
     for (const row of dataset.retailOfftakeRows.filter(
       (item) => item.negativeClampedFlag || item.duplicateVisitConflict,
     )) {
-      exceptions.push({
-        severity: row.negativeClampedFlag ? 'HIGH' : 'MEDIUM',
-        exception_type: row.negativeClampedFlag
+      pushException(
+        row.negativeClampedFlag ? 'HIGH' : 'MEDIUM',
+        row.negativeClampedFlag
           ? 'NEGATIVE_ESTIMATED_SALES_CLAMPED'
           : 'DUPLICATE_VISIT_CONFLICT',
-        reason: `${row.shopName} / ${row.productName}: ${row.dataQualityFlags}`,
-        recommended_action:
-          'Review the stock count sequence before using this estimated retail offtake value in planning.',
+        `${row.shopName} / ${row.productName}: ${row.dataQualityFlags}`,
+        'Review the stock count sequence before using this estimated retail offtake value in planning.',
+      );
+    }
+
+    return [...grouped.values()]
+      .map((row) => ({
+        severity: row.severity,
+        exception_type: row.exception_type,
+        reason:
+          row.count > 1
+            ? `${row.count} rows flagged. ${[...row.reasons][0]}`
+            : [...row.reasons][0],
+        recommended_action: row.recommended_action,
+      }))
+      .sort(
+        (left, right) =>
+          this.exceptionSeverityWeight(right.severity) -
+          this.exceptionSeverityWeight(left.severity),
+      )
+      .slice(0, 12);
+  }
+
+  private buildRecommendedActions(
+    dataset: OperationalDataset,
+    forecastDataset: ForecastDataset,
+  ): InsightRecommendedActionRow[] {
+    const actions: InsightRecommendedActionRow[] = [];
+    const orderedCases = this.sum(dataset.orderEvents, 'quantityCases');
+    const deliveredCases = this.sum(dataset.deliveryEvents, 'quantityCases');
+    const deliveryRate =
+      orderedCases > 0 ? deliveredCases / Math.max(orderedCases, 1) : 0;
+    const topWarehouseRisk = this.buildWarehouseRisk(dataset)[0];
+    const topDamagedProduct = this.buildDamageByProduct(dataset)[0];
+    const topOsaIssue = this.buildOsaIssuePressure(dataset)[0];
+    const topCompetitorRisk = this.buildCompetitorRiskVsSales(dataset)[0];
+    const topDissatisfiedShop = this.buildDissatisfiedShops(dataset)[0];
+    const topRepIssue = this.buildSalesRepIssuePressure(dataset)[0];
+    const topException = this.buildExceptions(dataset, forecastDataset)[0];
+
+    if (orderedCases > 0 && deliveryRate < 0.6) {
+      actions.push({
+        title: 'Escalate the fill-rate gap with warehouse dispatch',
+        owner: topWarehouseRisk?.warehouse_name ?? 'Warehouse operations',
+        priority: 'HIGH',
+        reason:
+          'Delivered cases are materially behind ordered cases, which is likely inflating stockouts and planner risk.',
+        metric: `${this.roundNumber(deliveryRate * 100)}% delivery rate`,
       });
     }
 
-    return exceptions.slice(0, 18);
+    if (topWarehouseRisk && topWarehouseRisk.risk_score > 0) {
+      actions.push({
+        title: `Review warehouse risk at ${topWarehouseRisk.warehouse_name}`,
+        owner: topWarehouseRisk.warehouse_name,
+        priority: topWarehouseRisk.warehouse_issue_count > 0 ? 'HIGH' : 'MEDIUM',
+        reason:
+          'This warehouse is surfacing the strongest mix of delivery gap, stockout pressure, damage, or warehouse-reported issues.',
+        metric: `Risk score ${this.roundNumber(topWarehouseRisk.risk_score)}`,
+      });
+    }
+
+    if (topDamagedProduct && topDamagedProduct.total_loss_units > 0) {
+      actions.push({
+        title: `Inspect repeated damage on ${topDamagedProduct.product_name}`,
+        owner: 'Trade quality / warehouse',
+        priority: 'MEDIUM',
+        reason:
+          'Sales-rep evidence shows the highest combined damaged and expired units on this product.',
+        metric: `${this.roundNumber(topDamagedProduct.total_loss_units)} units flagged`,
+      });
+    }
+
+    if (topOsaIssue) {
+      actions.push({
+        title: `Resolve OSA issue: ${topOsaIssue.issue_type}`,
+        owner: topOsaIssue.warehouse_name,
+        priority: 'MEDIUM',
+        reason:
+          'OSA issues collected in visits are recurring and directly suppress visible consumer movement.',
+        metric: `${topOsaIssue.issue_count} issue records`,
+      });
+    }
+
+    if (topCompetitorRisk && topCompetitorRisk.competitor_mentions > 0) {
+      actions.push({
+        title: `Defend competitor pressure in ${topCompetitorRisk.label}`,
+        owner: 'Commercial planning',
+        priority: 'MEDIUM',
+        reason:
+          'Field notes show competitor pressure where our customer movement should be defended with availability or commercial response.',
+        metric: `${topCompetitorRisk.competitor_mentions} competitor mentions`,
+      });
+    }
+
+    if (topDissatisfiedShop) {
+      actions.push({
+        title: `Recover dissatisfied shop: ${topDissatisfiedShop.shop_name}`,
+        owner: topDissatisfiedShop.warehouse_name,
+        priority: 'MEDIUM',
+        reason:
+          'This shop-owner account is currently showing the weakest feedback rating in the selected window.',
+        metric: `${this.roundNumber(topDissatisfiedShop.average_rating)} / 5 rating`,
+      });
+    }
+
+    if (topRepIssue) {
+      actions.push({
+        title: `Coach and unblock ${topRepIssue.sales_rep_name}`,
+        owner: topRepIssue.warehouse_name,
+        priority: topRepIssue.critical_count > 0 ? 'HIGH' : 'LOW',
+        reason:
+          'Sales-rep reports and incidents show repeated route, warehouse, or market problems affecting execution quality.',
+        metric: `${topRepIssue.issue_count} field issues`,
+      });
+    }
+
+    if (topException) {
+      actions.push({
+        title: `Planner caution: ${topException.exception_type}`,
+        owner: 'Demand planner',
+        priority: topException.severity === 'HIGH' ? 'HIGH' : 'LOW',
+        reason: topException.recommended_action,
+        metric: topException.severity,
+      });
+    }
+
+    return actions.slice(0, 8);
   }
 
   private buildDrilldowns(
@@ -2058,7 +3013,10 @@ export class InsightCenterService {
         ? dataset.stockoutEvents.length / dataset.stockCounts.length
         : 0;
     const topHeatmap = charts.territoryHeatmap[0];
-    const topException = charts.exceptions[0];
+    const topDamage = charts.damageByProduct[0];
+    const topWarehouseRisk = charts.warehouseRisk[0];
+    const topCompetitor = charts.competitorRiskVsSales[0];
+    const topAction = charts.recommendedActions[0];
 
     const summaries = [
       `Exact replenishment demand is ${this.roundNumber(ordered)} cases, while delivered fulfillment is ${this.roundNumber(delivered)} cases.`,
@@ -2073,8 +3031,23 @@ export class InsightCenterService {
         `${topHeatmap.territory_name} / ${topHeatmap.product_name} is the highest hotspot by demand gap and stockout intensity.`,
       );
     }
-    if (topException) {
-      summaries.push(`Planner action: ${topException.recommended_action}`);
+    if (topDamage && topDamage.total_loss_units > 0) {
+      summaries.push(
+        `${topDamage.product_name} is the most frequently damaged or expired product in the selected window at ${this.roundNumber(topDamage.total_loss_units)} units.`,
+      );
+    }
+    if (topWarehouseRisk && topWarehouseRisk.risk_score > 0) {
+      summaries.push(
+        `${topWarehouseRisk.warehouse_name} is currently the warehouse with the strongest combined delivery, stockout, and issue risk.`,
+      );
+    }
+    if (topCompetitor && topCompetitor.competitor_mentions > 0) {
+      summaries.push(
+        `${topCompetitor.label} is carrying the highest competitor pressure while still contributing visible customer movement.`,
+      );
+    }
+    if (topAction) {
+      summaries.push(`Planner action: ${topAction.title}. ${topAction.reason}`);
     }
 
     return summaries;
@@ -2119,6 +3092,42 @@ export class InsightCenterService {
       });
     }
 
+    for (const row of dashboard.charts.damageByProduct.slice(0, 10)) {
+      rows.push({
+        section: 'Damage by Product',
+        metric: row.product_name,
+        value: row.total_loss_units,
+        unit: 'units',
+        source_type: 'exact',
+        confidence_score: '',
+        notes: `Damaged: ${row.damaged_units} | Expired: ${row.expired_units}`,
+      });
+    }
+
+    for (const row of dashboard.charts.osaIssues.slice(0, 10)) {
+      rows.push({
+        section: 'OSA Issues',
+        metric: row.label,
+        value: row.issue_count,
+        unit: 'issues',
+        source_type: 'exact',
+        confidence_score: '',
+        notes: `Outlets: ${row.affected_outlets} | Warehouse: ${row.warehouse_name}`,
+      });
+    }
+
+    for (const row of dashboard.charts.recommendedActions.slice(0, 10)) {
+      rows.push({
+        section: 'Recommended Actions',
+        metric: row.title,
+        value: row.priority,
+        unit: '',
+        source_type: 'hybrid',
+        confidence_score: '',
+        notes: `${row.owner} | ${row.metric} | ${row.reason}`,
+      });
+    }
+
     for (const row of dashboard.charts.exceptions.slice(0, 20)) {
       rows.push({
         section: 'Exceptions',
@@ -2144,12 +3153,16 @@ export class InsightCenterService {
     const weakestMomentum = dashboard.charts.productMomentum.lowest[0];
     const topSalesProduct = dashboard.charts.customerSalesByProduct[0];
     const topGapProduct = dashboard.charts.orderVsCustomerSales[0];
+    const topDamagedProduct = dashboard.charts.damageByProduct[0];
+    const topWarehouseRisk = dashboard.charts.warehouseRisk[0];
+    const topOsaIssue = dashboard.charts.osaIssues[0];
+    const topDissatisfiedShop = dashboard.charts.dissatisfiedShops[0];
     const actions = [
       ...new Set(
-        dashboard.charts.exceptions
+        dashboard.charts.recommendedActions
           .slice(0, 6)
           .map((row: Record<string, unknown>) =>
-            String(row.recommended_action || '').trim(),
+            `${String(row.title || '').trim()}: ${String(row.reason || '').trim()}`,
           )
           .filter(Boolean),
       ),
@@ -2207,11 +3220,11 @@ export class InsightCenterService {
               : 'No promotion impact rows were available.',
         },
         {
-          title: 'Product momentum',
-          purpose: 'Highlight the strongest and weakest-moving products in the selected window.',
+          title: 'Product movement and customer sales',
+          purpose: 'Highlight the strongest-moving products, weakest movement, and customer-sales ranking.',
           dataSummary: topMomentum
-            ? `Highest movement: ${topMomentum.product_name} at ${this.roundNumber(topMomentum.demand_signal_cases)} cases. Lowest movement: ${weakestMomentum?.product_name ?? 'n/a'} at ${this.roundNumber(weakestMomentum?.demand_signal_cases ?? 0)} cases.`
-            : 'No product momentum rows were available.',
+            ? `Highest movement: ${topMomentum.product_name} at ${this.roundNumber(topMomentum.demand_signal_cases)} cases. Lowest movement: ${weakestMomentum?.product_name ?? 'n/a'} at ${this.roundNumber(weakestMomentum?.demand_signal_cases ?? 0)} cases. Highest customer-sales product: ${topSalesProduct?.product_name ?? 'n/a'}.`
+            : 'No product movement rows were available.',
         },
         {
           title: 'Order versus customer sales',
@@ -2219,6 +3232,26 @@ export class InsightCenterService {
           dataSummary: topGapProduct
             ? `${topGapProduct.product_name} shows the largest gap at ${this.roundNumber(topGapProduct.gap_cases)} cases.`
             : 'No order-versus-customer-sales rows were available.',
+        },
+        {
+          title: 'Field execution and risk',
+          purpose: 'Summarize damage, OSA issues, dissatisfied shops, and warehouse risk captured by sales reps.',
+          dataSummary: [
+            topDamagedProduct
+              ? `Top damaged product: ${topDamagedProduct.product_name} (${this.roundNumber(topDamagedProduct.total_loss_units)} units).`
+              : null,
+            topOsaIssue
+              ? `Top OSA issue: ${topOsaIssue.issue_type} at ${topOsaIssue.issue_count} records.`
+              : null,
+            topWarehouseRisk
+              ? `Highest warehouse risk: ${topWarehouseRisk.warehouse_name} score ${this.roundNumber(topWarehouseRisk.risk_score)}.`
+              : null,
+            topDissatisfiedShop
+              ? `Lowest shop rating: ${topDissatisfiedShop.shop_name} at ${this.roundNumber(topDissatisfiedShop.average_rating)} / 5.`
+              : null,
+          ]
+            .filter(Boolean)
+            .join(' '),
         },
       ],
       anomalies,
@@ -2252,6 +3285,9 @@ export class InsightCenterService {
         topMomentum
           ? `${topMomentum.product_name} is currently the strongest-moving product in the selected window.`
           : null,
+        topDamagedProduct
+          ? `${topDamagedProduct.product_name} is also the most damaged or expired product observed by sales reps.`
+          : null,
       ]
         .filter(Boolean)
         .join(' '),
@@ -2263,15 +3299,15 @@ export class InsightCenterService {
         : 'Use the KPI, trend, and exception charts together before committing a planning change.',
       sectionTitles: [
         'Executive summary',
-        'Demand and fulfilment trend',
-        'Promotion and product movement',
-        'Gap and exception watchlist',
+        'Demand, promotion, and sales movement',
+        'Field execution, damage, and OSA risk',
+        'Warehouse, compliance, and action watchlist',
       ],
       chartCaptions: [
         'Orders, deliveries, customer movement, and forecast are shown across the selected time window.',
-        'Promotion-active phases are compared against baseline movement.',
-        'The report highlights both the strongest and weakest-moving products.',
-        'Ordering is compared against estimated customer sales to show demand mismatches.',
+        'Promotion-active phases and products are compared against baseline movement.',
+        'The report highlights customer sales, damage, OSA, and competitor risk captured by the field team.',
+        'Warehouse risk, dissatisfied shops, and compliance violations are summarized with actions.',
       ],
       callouts: dashboard.summary.aiSummary.slice(0, 4),
     };
@@ -2293,6 +3329,322 @@ export class InsightCenterService {
     document.on('data', (chunk: Buffer) => chunks.push(chunk));
     const pageWidth =
       document.page.width - document.page.margins.left - document.page.margins.right;
+
+    const callouts = [...new Set([...narrative.callouts, ...dashboard.summary.aiSummary])].slice(
+      0,
+      5,
+    );
+    const summaryMetrics = dashboard.kpis.slice(0, 6);
+    const summaryMomentumRows = [
+      ...dashboard.charts.productMomentum.highest.slice(0, 3).map((row) => ({
+        product_name: `Highest: ${row.product_name}`,
+        demand_signal_cases: row.demand_signal_cases,
+      })),
+      ...dashboard.charts.productMomentum.lowest.slice(0, 3).map((row) => ({
+        product_name: `Lowest: ${row.product_name}`,
+        demand_signal_cases: row.demand_signal_cases,
+      })),
+    ];
+    const competitorSalesRows = dashboard.charts.competitorRiskVsSales
+      .slice(0, 6)
+      .map((row) => ({
+        label: `${row.label} (${row.competitor_mentions} mentions)`,
+        ordered_cases: row.ordered_cases,
+        estimated_retail_offtake_cases: row.estimated_retail_offtake_cases,
+      }));
+
+    document.fillColor('#6f8566').fontSize(10).text('DEMAND PLANNER INSIGHT REPORT');
+    document.moveDown(0.35);
+    document.fillColor('#243022').fontSize(24).text(narrative.reportTitle, {
+      width: pageWidth,
+    });
+    document.moveDown(0.25);
+    document.fillColor('#51604d').fontSize(10).text(
+      `Generated ${dashboard.summary.generatedAt.slice(0, 10)} | Window ${dashboard.summary.historyStartDate} to ${dashboard.summary.historyEndDate} | ${dashboard.summary.granularity} view`,
+      { width: pageWidth },
+    );
+    document.moveDown(0.7);
+
+    this.drawPdfHighlightBox(
+      document,
+      narrative.headline,
+      narrative.executiveSummary,
+      pageWidth,
+      '#eef6f2',
+      '#d6e4de',
+    );
+    this.drawPdfBulletList(document, 'What changed in this window', callouts, pageWidth);
+    this.drawPdfHighlightBox(
+      document,
+      'Data integrity note',
+      dashboard.summary.dataIntegrityWarning,
+      pageWidth,
+      '#fffaf4',
+      '#eadfd3',
+    );
+    this.drawPdfMetricGrid(document, summaryMetrics, pageWidth);
+    this.drawPdfDetailCards(
+      document,
+      'Immediate actions for the planner and warehouse team',
+      'These actions are generated from delivery gaps, warehouse pressure, OSA, field issues, and shop-owner feedback.',
+      dashboard.charts.recommendedActions.slice(0, 4).map((row) => ({
+        title: `${row.priority} | ${row.title}`,
+        value: row.metric,
+        detail: `${row.owner}: ${row.reason}`,
+      })),
+      pageWidth,
+      '#f6fbf8',
+      '#dce8e4',
+    );
+
+    document.addPage();
+    this.drawPdfSectionHeader(
+      document,
+      narrative.sectionTitles[1] ?? 'Demand, fulfilment, and consumer movement',
+      narrative.storyOfTheNumbers,
+      pageWidth,
+    );
+    this.drawInsightTrendChartV2(
+      document,
+      this.sampleRows(dashboard.charts.trend, 12),
+      pageWidth,
+      'Order, delivery, and consumer-demand trend',
+      'Y axis shows cases. X axis shows the selected time buckets across the report window.',
+    );
+    this.drawGroupedBarChartV2(
+      document,
+      dashboard.charts.orderVsCustomerSales.slice(0, 6),
+      pageWidth,
+      'Ordering versus customer sales by product',
+      'This compares shop ordering with estimated consumer movement so the planner can see which products are over-ordered or under-moving.',
+      'product_name',
+      [
+        { key: 'ordered_cases', label: 'Orders', color: '#5c7f56' },
+        {
+          key: 'estimated_retail_offtake_cases',
+          label: 'Customer sales',
+          color: '#b6793f',
+        },
+      ],
+    );
+    this.drawHorizontalBarChartV2(
+      document,
+      summaryMomentumRows,
+      pageWidth,
+      'Highest and lowest visible product movement',
+      'Products are ranked by the strongest visible demand signal in the selected window.',
+      'product_name',
+      'demand_signal_cases',
+      '#8f6a3c',
+      'cases',
+    );
+
+    document.addPage();
+    this.drawPdfSectionHeader(
+      document,
+      'Promotion and customer-sales response',
+      'These charts show whether promotions are lifting ordering and estimated customer sales, and which promoted products are carrying that effect.',
+      pageWidth,
+    );
+    this.drawGroupedBarChartV2(
+      document,
+      dashboard.charts.promotionImpact,
+      pageWidth,
+      'Promotion impact on orders and customer sales',
+      'Baseline, promotion-active, and uplift phases are compared in cases.',
+      'phase',
+      [
+        { key: 'ordered_cases', label: 'Orders', color: '#5c7f56' },
+        {
+          key: 'estimated_retail_offtake_cases',
+          label: 'Customer sales',
+          color: '#b6793f',
+        },
+      ],
+    );
+    this.drawGroupedBarChartV2(
+      document,
+      dashboard.charts.promotionProductImpact.slice(0, 6),
+      pageWidth,
+      'Products most affected by promotions',
+      'This focuses on promoted demand only, so the planner can see which products are reacting most strongly while promotions are active.',
+      'product_name',
+      [
+        { key: 'promoted_ordered_cases', label: 'Promoted orders', color: '#5c7f56' },
+        {
+          key: 'promoted_estimated_retail_offtake_cases',
+          label: 'Promoted customer sales',
+          color: '#b6793f',
+        },
+      ],
+    );
+    this.drawHorizontalBarChartV2(
+      document,
+      dashboard.charts.customerSalesByProduct.slice(0, 6),
+      pageWidth,
+      'Customer sales by product',
+      'Estimated retail offtake by product in the selected window. This shows what consumers appear to be buying, not only what shops ordered.',
+      'product_name',
+      'estimated_retail_offtake_cases',
+      '#54715a',
+      'cases',
+    );
+
+    document.addPage();
+    this.drawPdfSectionHeader(
+      document,
+      'Damage, OSA, and field-execution evidence',
+      'These are direct observations captured by sales reps. They highlight physical product loss, on-shelf availability problems, and where execution issues are suppressing movement.',
+      pageWidth,
+    );
+    this.drawHorizontalBarChartV2(
+      document,
+      dashboard.charts.damageByProduct.slice(0, 6),
+      pageWidth,
+      'Most damaged or expired products',
+      'Higher bars indicate products repeatedly flagged by sales reps for damage or expiry.',
+      'product_name',
+      'total_loss_units',
+      '#a76d4c',
+      'units',
+    );
+    this.drawHorizontalBarChartV2(
+      document,
+      dashboard.charts.damageByWarehouse.slice(0, 6),
+      pageWidth,
+      'Warehouses associated with repeated damage',
+      'This shows which warehouses are most often linked to damaged or expired units in the selected window.',
+      'warehouse_name',
+      'total_loss_units',
+      '#8e6a3b',
+      'units',
+    );
+    this.drawHorizontalBarChartV2(
+      document,
+      dashboard.charts.osaIssues.slice(0, 6),
+      pageWidth,
+      'OSA issues captured in outlet visits',
+      'Higher bars indicate more repeated on-shelf availability issues that directly suppress sell-through.',
+      'label',
+      'issue_count',
+      '#b6793f',
+      'issues',
+    );
+
+    document.addPage();
+    this.drawPdfSectionHeader(
+      document,
+      'Competitor pressure, shop-owner feedback, and compliance',
+      'This page connects competitor pressure, customer movement, shop-owner sentiment, and in-store rule violations so the planner can see commercial and execution risk together.',
+      pageWidth,
+    );
+    this.drawGroupedBarChartV2(
+      document,
+      competitorSalesRows,
+      pageWidth,
+      'Competitor pressure versus our sales',
+      'Each territory label includes competitor mentions, while the bars show our visible orders and estimated customer sales in the same area.',
+      'label',
+      [
+        { key: 'ordered_cases', label: 'Orders', color: '#5c7f56' },
+        {
+          key: 'estimated_retail_offtake_cases',
+          label: 'Customer sales',
+          color: '#b6793f',
+        },
+      ],
+    );
+    this.drawPdfDetailCards(
+      document,
+      'Most dissatisfied shop owners',
+      'These accounts have the weakest ratings or most concerning recent feedback comments in the selected window.',
+      dashboard.charts.dissatisfiedShops.slice(0, 4).map((row) => ({
+        title: `${row.shop_name} | ${this.roundNumber(row.average_rating)} / 5`,
+        value: `${row.feedback_count} feedbacks`,
+        detail: `${row.territory_name} | ${row.warehouse_name}${row.latest_comment ? ` | ${row.latest_comment}` : ''}`,
+      })),
+      pageWidth,
+      '#fffaf4',
+      '#eadfd3',
+    );
+    this.drawPdfDetailCards(
+      document,
+      'Shops violating marketing rules',
+      'These shops are repeatedly failing planogram or POSM execution checks during store visits.',
+      dashboard.charts.complianceViolations.slice(0, 4).map((row) => ({
+        title: `${row.shop_name} | ${row.violation_count} violations`,
+        value: `${row.planogram_failures} planogram / ${row.posm_failures} POSM`,
+        detail: `${row.territory_name} | ${row.warehouse_name}`,
+      })),
+      pageWidth,
+      '#fffaf4',
+      '#eadfd3',
+    );
+
+    document.addPage();
+    this.drawPdfSectionHeader(
+      document,
+      narrative.sectionTitles[3] ?? 'Warehouse, field-team, and planner watchlist',
+      narrative.managementRecommendation,
+      pageWidth,
+    );
+    this.drawPdfDetailCards(
+      document,
+      'Sales-rep report issues',
+      'These rows summarize the sales reps carrying the heaviest route, warehouse, or market-execution burden in the selected window.',
+      dashboard.charts.salesRepIssues.slice(0, 4).map((row) => ({
+        title: `${row.sales_rep_name} | ${row.issue_count} issues`,
+        value: `${row.critical_count} critical`,
+        detail: `${row.territory_name} | ${row.warehouse_name} | dominant issue: ${row.dominant_issue}`,
+      })),
+      pageWidth,
+      '#f6fbf8',
+      '#dce8e4',
+    );
+    this.drawPdfDetailCards(
+      document,
+      'Warehouse risk watchlist',
+      'These warehouses combine delivery gaps, stockouts, product loss, and warehouse-reported issues into a single operational watchlist.',
+      dashboard.charts.warehouseRisk.slice(0, 4).map((row) => ({
+        title: `${row.warehouse_name} | risk ${this.roundNumber(row.risk_score)}`,
+        value: `${this.roundNumber(row.delivery_gap_cases)} gap`,
+        detail: `${row.stockout_count} stockouts | ${this.roundNumber(row.damage_units)} damaged units | ${row.warehouse_issue_count} warehouse issues`,
+      })),
+      pageWidth,
+      '#f6fbf8',
+      '#dce8e4',
+    );
+    this.drawPdfDetailCards(
+      document,
+      'Planner action watchlist',
+      'These are the recommended actions generated from the current data window. They combine warehouse, field, customer, and forecast evidence.',
+      dashboard.charts.recommendedActions.slice(0, 6).map((row) => ({
+        title: `${row.priority} | ${row.title}`,
+        value: row.metric,
+        detail: `${row.owner}: ${row.reason}`,
+      })),
+      pageWidth,
+      '#eef6f2',
+      '#d6e4de',
+    );
+    this.drawPdfDetailCards(
+      document,
+      'Exception watchlist',
+      'Repeated forecast or data-quality issues are grouped once here so the planner sees the risk clearly instead of reading the same warning multiple times.',
+      dashboard.charts.exceptions.slice(0, 6).map((row) => ({
+        title: `${row.exception_type} | ${row.severity}`,
+        value: row.recommended_action,
+        detail: row.reason,
+      })),
+      pageWidth,
+      '#fffaf4',
+      '#eadfd3',
+    );
+
+    document.end();
+    return await new Promise<Buffer>((resolve) => {
+      document.on('end', () => resolve(Buffer.concat(chunks)));
+    });
 
     const drawMetricCard = (
       x: number,
@@ -2637,6 +3989,447 @@ export class InsightCenterService {
     document.y = top + chartHeight;
   }
 
+  private drawPdfSectionHeader(
+    document: any,
+    title: string,
+    body: string,
+    width: number,
+  ) {
+    document.fillColor('#243022').fontSize(18).text(title, {
+      width,
+    });
+    document.moveDown(0.3);
+    document.fillColor('#5d6d60').fontSize(10).text(body, {
+      width,
+    });
+    document.moveDown(0.5);
+  }
+
+  private drawPdfHighlightBox(
+    document: any,
+    title: string,
+    body: string,
+    width: number,
+    fillColor: string,
+    strokeColor: string,
+  ) {
+    const left = document.x;
+    document.fontSize(14);
+    const titleHeight = document.heightOfString(title, { width: width - 28 });
+    document.fontSize(10);
+    const bodyHeight = document.heightOfString(body, { width: width - 28 });
+    const boxHeight = Math.max(70, 30 + titleHeight + bodyHeight);
+    this.ensurePdfSpace(document, boxHeight + 12);
+    const top = document.y;
+
+    document.roundedRect(left, top, width, boxHeight, 12).fillAndStroke(fillColor, strokeColor);
+    document.fillColor('#243022').fontSize(14).text(title, left + 14, top + 12, {
+      width: width - 28,
+    });
+    document.fillColor('#5d6d60').fontSize(10).text(body, left + 14, top + 28 + titleHeight / 2, {
+      width: width - 28,
+    });
+    document.y = top + boxHeight + 10;
+  }
+
+  private drawPdfBulletList(
+    document: any,
+    title: string,
+    items: string[],
+    width: number,
+  ) {
+    if (items.length === 0) {
+      return;
+    }
+    const estimatedHeight = 40 + items.length * 18;
+    this.ensurePdfSpace(document, estimatedHeight);
+    document.fillColor('#243022').fontSize(13).text(title, {
+      width,
+    });
+    document.moveDown(0.2);
+    for (const item of items) {
+      document.fillColor('#5d6d60').fontSize(10).text(`- ${item}`, {
+        width,
+      });
+      document.moveDown(0.12);
+    }
+    document.moveDown(0.35);
+  }
+
+  private drawPdfMetricGrid(document: any, metrics: KpiCard[], width: number) {
+    if (metrics.length === 0) {
+      return;
+    }
+    const columns = 2;
+    const gap = 10;
+    const cardWidth = (width - gap) / columns;
+    const cardHeight = 78;
+    const rows = Math.ceil(metrics.length / columns);
+    this.ensurePdfSpace(document, rows * (cardHeight + gap) + 12);
+    const left = document.x;
+    const top = document.y;
+
+    metrics.forEach((kpi, index) => {
+      const rowIndex = Math.floor(index / columns);
+      const columnIndex = index % columns;
+      const x = left + columnIndex * (cardWidth + gap);
+      const y = top + rowIndex * (cardHeight + gap);
+
+      document.roundedRect(x, y, cardWidth, cardHeight, 10).fillAndStroke('#f8fbf5', '#d7e4d2');
+      document.fillColor('#687561').fontSize(9).text(kpi.label, x + 10, y + 10, {
+        width: cardWidth - 20,
+      });
+      document.fillColor('#243022').fontSize(16).text(
+        `${this.roundNumber(kpi.value)} ${kpi.unit}`,
+        x + 10,
+        y + 28,
+        {
+          width: cardWidth - 20,
+        },
+      );
+      document.fillColor('#6d645c').fontSize(8).text(kpi.caption, x + 10, y + 48, {
+        width: cardWidth - 20,
+      });
+    });
+
+    document.y = top + rows * (cardHeight + gap) + 4;
+  }
+
+  private drawPdfDetailCards(
+    document: any,
+    title: string,
+    subtitle: string,
+    rows: Array<{ title: string; value: string; detail: string }>,
+    width: number,
+    fillColor: string,
+    strokeColor: string,
+  ) {
+    if (rows.length === 0) {
+      return;
+    }
+    const rowHeight = 54;
+    const totalHeight = 42 + rows.length * (rowHeight + 8);
+    this.ensurePdfSpace(document, totalHeight);
+    const left = document.x;
+    const top = document.y;
+
+    document.fillColor('#243022').fontSize(14).text(title, left, top, { width });
+    document.fillColor('#5d6d60').fontSize(9).text(subtitle, left, top + 18, { width });
+
+    let rowTop = top + 40;
+    for (const row of rows) {
+      document.roundedRect(left, rowTop, width, rowHeight, 10).fillAndStroke(fillColor, strokeColor);
+      document.fillColor('#243022').fontSize(10).text(row.title, left + 12, rowTop + 10, {
+        width: width - 120,
+      });
+      document.fillColor('#6f8566').fontSize(8).text(row.value, left + width - 96, rowTop + 12, {
+        width: 84,
+        align: 'right',
+      });
+      document.fillColor('#6d645c').fontSize(8.5).text(row.detail, left + 12, rowTop + 26, {
+        width: width - 24,
+      });
+      rowTop += rowHeight + 8;
+    }
+
+    document.y = rowTop + 2;
+  }
+
+  private drawInsightTrendChartV2(
+    document: any,
+    rows: Record<string, unknown>[],
+    width: number,
+    title: string,
+    subtitle: string,
+  ) {
+    if (rows.length === 0) {
+      return;
+    }
+
+    const chartHeight = 228;
+    this.ensurePdfSpace(document, chartHeight + 16);
+    const left = document.x;
+    const top = document.y;
+    const plotLeft = left + 44;
+    const plotRight = left + width - 10;
+    const plotTop = top + 46;
+    const plotBottom = top + chartHeight - 42;
+    const plotWidth = plotRight - plotLeft;
+    const plotHeight = plotBottom - plotTop;
+    const maxValue = Math.max(
+      1,
+      ...rows.flatMap((row) => [
+        Number(row.display_ordered_cases ?? row.ordered_cases ?? 0),
+        Number(row.display_delivered_cases ?? row.delivered_cases ?? 0),
+        Number(
+          row.display_estimated_retail_offtake_cases ??
+            row.estimated_retail_offtake_cases ??
+            0,
+        ),
+        Number(row.display_forecast_cases ?? row.forecast_cases ?? 0),
+      ]),
+    );
+    const spacing = rows.length > 1 ? plotWidth / (rows.length - 1) : 0;
+
+    document.fillColor('#243022').fontSize(14).text(title, left, top, { width });
+    document.fillColor('#5d6d60').fontSize(10).text(subtitle, left, top + 18, { width });
+
+    document.lineWidth(1).strokeColor('#e8efe4');
+    for (let index = 0; index < 4; index += 1) {
+      const y = plotTop + (plotHeight / 3) * index;
+      document.moveTo(plotLeft, y).lineTo(plotRight, y).stroke();
+      document.fillColor('#7a8772').fontSize(8).text(
+        this.roundNumber(maxValue - (maxValue / 3) * index).toString(),
+        left,
+        y - 4,
+        { width: 34, align: 'right' },
+      );
+    }
+
+    const drawSeries = (
+      color: string,
+      extractor: (row: Record<string, unknown>) => number,
+    ) => {
+      document.strokeColor(color).lineWidth(2);
+      rows.forEach((row, index) => {
+        const x = plotLeft + spacing * index;
+        const y = plotBottom - (extractor(row) / maxValue) * plotHeight;
+        if (index === 0) {
+          document.moveTo(x, y);
+        } else {
+          document.lineTo(x, y);
+        }
+      });
+      document.stroke();
+      rows.forEach((row, index) => {
+        const x = plotLeft + spacing * index;
+        const y = plotBottom - (extractor(row) / maxValue) * plotHeight;
+        document.fillColor(color).circle(x, y, 2.5).fill();
+      });
+    };
+
+    drawSeries('#567454', (row) => Number(row.display_ordered_cases ?? row.ordered_cases ?? 0));
+    drawSeries('#8da69b', (row) => Number(row.display_delivered_cases ?? row.delivered_cases ?? 0));
+    drawSeries('#b6793f', (row) =>
+      Number(
+        row.display_estimated_retail_offtake_cases ??
+          row.estimated_retail_offtake_cases ??
+          0,
+      ),
+    );
+    drawSeries('#7c88a6', (row) => Number(row.display_forecast_cases ?? row.forecast_cases ?? 0));
+
+    const labelIndexes = [
+      ...new Set([
+        0,
+        Math.floor((rows.length - 1) / 3),
+        Math.floor(((rows.length - 1) * 2) / 3),
+        rows.length - 1,
+      ]),
+    ];
+    labelIndexes.forEach((index) => {
+      const row = rows[index];
+      const x = plotLeft + spacing * index;
+      document.fillColor('#7a8772').fontSize(8).text(
+        String(row.label ?? row.date ?? ''),
+        x - 26,
+        plotBottom + 6,
+        {
+          width: 52,
+          align: 'center',
+        },
+      );
+    });
+
+    document.fillColor('#7a8772').fontSize(8).text('Cases', left, plotTop - 14, {
+      width: 36,
+      align: 'right',
+    });
+    document.fillColor('#7a8772').fontSize(8).text('Time window', plotLeft, plotBottom + 20, {
+      width: plotWidth,
+      align: 'center',
+    });
+
+    const legendY = plotBottom + 32;
+    [
+      ['#567454', 'Orders'],
+      ['#8da69b', 'Deliveries'],
+      ['#b6793f', 'Customer sales'],
+      ['#7c88a6', 'Forecast'],
+    ].forEach(([color, label], index) => {
+      document.fillColor(color).circle(left + index * 110 + 6, legendY + 4, 3).fill();
+      document.fillColor('#5d6d60').fontSize(8).text(label, left + index * 110 + 16, legendY, {
+        width: 84,
+      });
+    });
+
+    document.y = top + chartHeight;
+  }
+
+  private drawGroupedBarChartV2(
+    document: any,
+    rows: Record<string, unknown>[],
+    width: number,
+    title: string,
+    subtitle: string,
+    labelKey: string,
+    series: Array<{ key: string; label: string; color: string }>,
+  ) {
+    if (rows.length === 0) {
+      return;
+    }
+
+    const chartHeight = 220;
+    this.ensurePdfSpace(document, chartHeight + 16);
+    const left = document.x;
+    const top = document.y;
+    const plotLeft = left + 42;
+    const plotRight = left + width - 10;
+    const plotTop = top + 44;
+    const plotBottom = top + chartHeight - 40;
+    const plotWidth = plotRight - plotLeft;
+    const plotHeight = plotBottom - plotTop;
+    const maxValue = Math.max(
+      1,
+      ...rows.flatMap((row) => series.map((item) => Number(row[item.key] ?? 0))),
+    );
+    const groupWidth = plotWidth / rows.length;
+    const barWidth = Math.max(8, Math.min(18, (groupWidth - 12) / series.length));
+
+    document.fillColor('#243022').fontSize(14).text(title, left, top, { width });
+    document.fillColor('#5d6d60').fontSize(10).text(subtitle, left, top + 18, { width });
+
+    document.lineWidth(1).strokeColor('#e8efe4');
+    for (let index = 0; index < 4; index += 1) {
+      const y = plotTop + (plotHeight / 3) * index;
+      document.moveTo(plotLeft, y).lineTo(plotRight, y).stroke();
+      document.fillColor('#7a8772').fontSize(8).text(
+        this.roundNumber(maxValue - (maxValue / 3) * index).toString(),
+        left,
+        y - 4,
+        { width: 34, align: 'right' },
+      );
+    }
+
+    rows.forEach((row, rowIndex) => {
+      const baseX = plotLeft + rowIndex * groupWidth + 6;
+      series.forEach((item, seriesIndex) => {
+        const value = Number(row[item.key] ?? 0);
+        const barHeight = (value / maxValue) * plotHeight;
+        const x = baseX + seriesIndex * (barWidth + 4);
+        const y = plotBottom - barHeight;
+        document.fillColor(item.color).rect(x, y, barWidth, barHeight).fill();
+      });
+
+      document.fillColor('#7a8772').fontSize(7).text(
+        this.truncateLabelSafe(String(row[labelKey] ?? ''), 18),
+        baseX - 6,
+        plotBottom + 6,
+        {
+          width: groupWidth,
+          align: 'center',
+        },
+      );
+    });
+
+    const legendY = plotBottom + 20;
+    series.forEach((item, index) => {
+      document.fillColor(item.color).circle(left + index * 120 + 6, legendY + 4, 3).fill();
+      document.fillColor('#5d6d60').fontSize(8).text(item.label, left + index * 120 + 16, legendY, {
+        width: 96,
+      });
+    });
+    document.fillColor('#7a8772').fontSize(8).text('Cases', left, plotTop - 14, {
+      width: 36,
+      align: 'right',
+    });
+
+    document.y = top + chartHeight;
+  }
+
+  private drawHorizontalBarChartV2(
+    document: any,
+    rows: Record<string, unknown>[],
+    width: number,
+    title: string,
+    subtitle: string,
+    labelKey: string,
+    valueKey: string,
+    color: string,
+    unitLabel = 'value',
+  ) {
+    if (rows.length === 0) {
+      return;
+    }
+
+    const rowHeight = 22;
+    const chartHeight = 60 + rows.length * rowHeight;
+    this.ensurePdfSpace(document, chartHeight + 12);
+    const left = document.x;
+    const top = document.y;
+    const labelWidth = 175;
+    const barLeft = left + labelWidth;
+    const barRight = left + width - 48;
+    const barWidth = barRight - barLeft;
+    const maxValue = Math.max(1, ...rows.map((row) => Number(row[valueKey] ?? 0)));
+
+    document.fillColor('#243022').fontSize(14).text(title, left, top, { width });
+    document.fillColor('#5d6d60').fontSize(10).text(subtitle, left, top + 18, { width });
+    document.fillColor('#7a8772').fontSize(8).text(unitLabel, barRight - 60, top + 34, {
+      width: 54,
+      align: 'right',
+    });
+
+    rows.forEach((row, index) => {
+      const y = top + 48 + index * rowHeight;
+      const value = Number(row[valueKey] ?? 0);
+      const widthValue = (value / maxValue) * barWidth;
+      document.fillColor('#687561').fontSize(8).text(
+        this.truncateLabelSafe(String(row[labelKey] ?? ''), 30),
+        left,
+        y + 2,
+        { width: labelWidth - 8 },
+      );
+      document.roundedRect(barLeft, y + 4, barWidth, 10, 4).fillAndStroke('#f3f7f1', '#e0e9dc');
+      document.roundedRect(barLeft, y + 4, widthValue, 10, 4).fill(color);
+      document.fillColor('#243022').fontSize(8).text(
+        this.roundNumber(value).toString(),
+        barRight + 6,
+        y + 2,
+        { width: 40, align: 'right' },
+      );
+    });
+
+    document.y = top + chartHeight;
+  }
+
+  private ensurePdfSpace(document: any, requiredHeight: number) {
+    const bottom = document.page.height - document.page.margins.bottom;
+    if (document.y + requiredHeight > bottom) {
+      document.addPage();
+    }
+  }
+
+  private sampleRows<T>(rows: T[], maxRows: number) {
+    if (rows.length <= maxRows) {
+      return rows;
+    }
+    const sampled: T[] = [];
+    const seenIndexes = new Set<number>();
+    for (let index = 0; index < maxRows; index += 1) {
+      const sampleIndex = Math.round((index * (rows.length - 1)) / (maxRows - 1));
+      if (!seenIndexes.has(sampleIndex)) {
+        sampled.push(rows[sampleIndex]);
+        seenIndexes.add(sampleIndex);
+      }
+    }
+    return sampled;
+  }
+
+  private truncateLabelSafe(value: string, maxLength: number) {
+    return value.length <= maxLength ? value : `${value.slice(0, maxLength - 3)}...`;
+  }
+
   private drawGroupedBarChart(
     document: any,
     rows: Record<string, unknown>[],
@@ -2766,6 +4559,65 @@ export class InsightCenterService {
     return value.length <= maxLength ? value : `${value.slice(0, maxLength - 1)}…`;
   }
 
+  private ensureExplicitReportWindow(query: InsightCenterQuery) {
+    if (!query.fromDate?.trim() || !query.toDate?.trim()) {
+      throw new BadRequestException(
+        'Select both from and to dates before generating the Insight Center report.',
+      );
+    }
+  }
+
+  private summarizeVisitAnswers(rows: Array<Record<string, unknown>>) {
+    return rows
+      .slice(0, 3)
+      .map((row) => {
+        const question = row.question?.toString().trim() ?? '';
+        const answer = row.answer?.toString().trim() ?? '';
+        return question && answer ? `${question}: ${answer}` : '';
+      })
+      .filter(Boolean)
+      .join(' | ');
+  }
+
+  private inferDailyReportSeverity(text: string) {
+    const normalized = text.toLowerCase();
+    if (
+      normalized.includes('critical') ||
+      normalized.includes('urgent') ||
+      normalized.includes('blocked')
+    ) {
+      return 'HIGH' as const;
+    }
+    if (
+      normalized.includes('delay') ||
+      normalized.includes('damage') ||
+      normalized.includes('stock') ||
+      normalized.includes('warehouse')
+    ) {
+      return 'MEDIUM' as const;
+    }
+    return 'LOW' as const;
+  }
+
+  private exceptionSeverityWeight(severity: 'LOW' | 'MEDIUM' | 'HIGH') {
+    if (severity === 'HIGH') return 3;
+    if (severity === 'MEDIUM') return 2;
+    return 1;
+  }
+
+  private lookupWarehouseName(
+    dataset: OperationalDataset,
+    warehouseId: string | null,
+  ) {
+    if (!warehouseId) {
+      return 'Unassigned';
+    }
+    return (
+      dataset.warehouses.find((warehouse) => warehouse.id === warehouseId)?.name ??
+      'Unassigned'
+    );
+  }
+
   private normalizeFilters(query: InsightCenterQuery): InsightFilters {
     const generatedAt = new Date();
     const toDate = query.toDate?.trim()
@@ -2822,6 +4674,8 @@ export class InsightCenterService {
   private resolvePeriodStart(period: string, toDate: Date) {
     if (period === '7d') return this.addDays(toDate, -6);
     if (period === '90d') return this.addDays(toDate, -89);
+    if (period === '180d') return this.addDays(toDate, -179);
+    if (period === '365d') return this.addDays(toDate, -364);
     if (period === 'ytd') {
       return new Date(Date.UTC(toDate.getUTCFullYear(), 0, 1));
     }
@@ -3090,6 +4944,7 @@ export class InsightCenterService {
     productById: Map<string, Product>,
     canonicalShopId: string,
     observedAt: Date,
+    visitRow: VisitRow,
     lossEvents: LossEvent[],
   ) {
     const expiryItems = Array.isArray(visit.expiryItemsJson)
@@ -3101,10 +4956,19 @@ export class InsightCenterService {
         continue;
       }
       const productId = record.productId?.toString() ?? null;
+      const productName =
+        (productId ? productById.get(productId)?.productName : null) ??
+        record.productName?.toString() ??
+        'Unknown product';
       lossEvents.push({
         timestamp: observedAt,
         canonicalShopId,
         productId,
+        productName,
+        territoryId: visitRow.territoryId,
+        territoryName: visitRow.territoryName,
+        warehouseId: visitRow.warehouseId,
+        warehouseName: visitRow.warehouseName,
         lossType: 'EXPIRED',
         quantityUnits: this.readNumber(record.quantityUnits),
       });
@@ -3125,6 +4989,10 @@ export class InsightCenterService {
         : [];
       const productId = productIds[0] ?? null;
       const product = productId ? productById.get(productId) : null;
+      const productName =
+        record.productNames && Array.isArray(record.productNames)
+          ? String(record.productNames[0] ?? product?.productName ?? 'Unknown product')
+          : product?.productName ?? 'Unknown product';
       const quantityCases = this.readNumber(record.quantityCases);
       const quantityUnits =
         this.readNumber(record.quantityUnits) ||
@@ -3134,8 +5002,108 @@ export class InsightCenterService {
         timestamp: observedAt,
         canonicalShopId,
         productId,
+        productName,
+        territoryId: visitRow.territoryId,
+        territoryName: visitRow.territoryName,
+        warehouseId: visitRow.warehouseId,
+        warehouseName: visitRow.warehouseName,
         lossType: 'DAMAGED',
         quantityUnits,
+      });
+    }
+  }
+
+  private addVisitOsaIssues(
+    visit: StoreVisit,
+    visitRow: VisitRow,
+    productById: Map<string, Product>,
+    warehouseName: string | null,
+    rows: OsaIssueObservation[],
+  ) {
+    const issues = Array.isArray(visit.osaIssuesJson) ? visit.osaIssuesJson : [];
+
+    for (const issue of issues) {
+      const record = issue as unknown as Record<string, unknown>;
+      const issueTag = record.tag?.toString().trim() || 'OSA_ISSUE';
+      const notes = record.notes?.toString().trim() || '';
+      const productIds = Array.isArray(record.productIds)
+        ? record.productIds.map((value) => String(value))
+        : [];
+      const productNames = Array.isArray(record.productNames)
+        ? record.productNames.map((value) => String(value))
+        : [];
+
+      if (productIds.length === 0 && productNames.length === 0) {
+        rows.push({
+          issueId: `${visit.id}:${issueTag}:${rows.length}`,
+          observedDate: visitRow.visitDate,
+          canonicalShopId: visitRow.canonicalShopId,
+          shopName: visitRow.shopName,
+          territoryId: visitRow.territoryId,
+          territoryName: visitRow.territoryName,
+          warehouseId: visitRow.warehouseId,
+          warehouseName: warehouseName ?? 'Unassigned',
+          productId: null,
+          productName: null,
+          issueTag,
+          notes,
+        });
+        continue;
+      }
+
+      const rowCount = Math.max(productIds.length, productNames.length);
+      for (let index = 0; index < rowCount; index += 1) {
+        const productId = productIds[index] ?? null;
+        const productName =
+          productNames[index] ??
+          (productId ? productById.get(productId)?.productName : null) ??
+          null;
+        rows.push({
+          issueId: `${visit.id}:${issueTag}:${productId ?? productName ?? index}`,
+          observedDate: visitRow.visitDate,
+          canonicalShopId: visitRow.canonicalShopId,
+          shopName: visitRow.shopName,
+          territoryId: visitRow.territoryId,
+          territoryName: visitRow.territoryName,
+          warehouseId: visitRow.warehouseId,
+          warehouseName: warehouseName ?? 'Unassigned',
+          productId,
+          productName,
+          issueTag,
+          notes,
+        });
+      }
+    }
+  }
+
+  private addComplianceViolations(
+    visitRow: VisitRow,
+    rows: ComplianceObservation[],
+  ) {
+    if (visitRow.planogramOk === false) {
+      rows.push({
+        visitId: `${visitRow.visitId}:PLANOGRAM`,
+        observedDate: visitRow.visitDate,
+        canonicalShopId: visitRow.canonicalShopId,
+        shopName: visitRow.shopName,
+        territoryId: visitRow.territoryId,
+        territoryName: visitRow.territoryName,
+        warehouseId: visitRow.warehouseId,
+        warehouseName: visitRow.warehouseName,
+        violationType: 'PLANOGRAM',
+      });
+    }
+    if (visitRow.posmOk === false) {
+      rows.push({
+        visitId: `${visitRow.visitId}:POSM`,
+        observedDate: visitRow.visitDate,
+        canonicalShopId: visitRow.canonicalShopId,
+        shopName: visitRow.shopName,
+        territoryId: visitRow.territoryId,
+        territoryName: visitRow.territoryName,
+        warehouseId: visitRow.warehouseId,
+        warehouseName: visitRow.warehouseName,
+        violationType: 'POSM',
       });
     }
   }
@@ -3171,6 +5139,184 @@ export class InsightCenterService {
 
     addSignal('competitor_note', visit.competitorNotes);
     addSignal('outlet_feedback', visit.outletFeedback);
+  }
+
+  private buildShopFeedbackRows(
+    orderFeedbacks: OrderFeedback[],
+    feedbackSubmissions: FeedbackSubmission[],
+    visitRows: VisitRow[],
+    users: User[],
+    orderInfos: Map<string, OrderInfo>,
+    shopContext: ShopReferenceContext,
+    filters: InsightFilters,
+  ) {
+    const usersById = new Map(users.map((user) => [user.id, user]));
+    const rows: ShopFeedbackObservation[] = [];
+
+    for (const feedback of orderFeedbacks) {
+      const orderInfo = orderInfos.get(feedback.orderId);
+      const shop = orderInfo
+        ? shopContext.rowsByCanonicalId.get(orderInfo.canonicalShopId) ?? null
+        : null;
+      const owner = usersById.get(feedback.shopOwnerId);
+
+      rows.push({
+        feedbackId: feedback.id,
+        feedbackDate: this.dateKey(feedback.createdAt),
+        canonicalShopId: orderInfo?.canonicalShopId ?? null,
+        shopName:
+          shop?.name ??
+          owner?.shopName?.trim() ??
+          `${owner?.firstName ?? ''} ${owner?.lastName ?? ''}`.trim() ??
+          'Unknown shop',
+        territoryId: shop?.territoryId ?? feedback.territoryId ?? owner?.territoryId ?? null,
+        territoryName:
+          shop?.territoryName ?? owner?.territory?.name ?? 'Unassigned',
+        warehouseId: shop?.warehouseId ?? owner?.warehouseId ?? null,
+        warehouseName:
+          shop?.warehouseName ?? owner?.warehouse?.name ?? owner?.warehouseName ?? 'Unassigned',
+        rating: Number.isFinite(feedback.rating) ? Number(feedback.rating) : null,
+        comment: feedback.comment?.trim() ?? '',
+        sourceType: 'ORDER_FEEDBACK',
+      });
+    }
+
+    for (const visit of visitRows) {
+      const answerComment = this.summarizeVisitAnswers(visit.outletFeedbackAnswers);
+      const comment = [visit.outletFeedback?.trim() ?? '', answerComment]
+        .filter(Boolean)
+        .join(' | ');
+      if (!comment) {
+        continue;
+      }
+      rows.push({
+        feedbackId: `visit:${visit.visitId}`,
+        feedbackDate: visit.visitDate,
+        canonicalShopId: visit.canonicalShopId,
+        shopName: visit.shopName,
+        territoryId: visit.territoryId,
+        territoryName: visit.territoryName ?? 'Unassigned',
+        warehouseId: visit.warehouseId,
+        warehouseName: visit.warehouseName ?? 'Unassigned',
+        rating: null,
+        comment,
+        sourceType: 'VISIT_FEEDBACK',
+      });
+    }
+
+    for (const feedback of feedbackSubmissions) {
+      const user = usersById.get(feedback.userId);
+      if (!user || user.role !== Role.SHOP_OWNER) {
+        continue;
+      }
+      rows.push({
+        feedbackId: feedback.id,
+        feedbackDate: this.dateKey(feedback.createdAt),
+        canonicalShopId: shopContext.canonicalByShopOwnerId.get(user.id)?.canonicalShopId ?? null,
+        shopName:
+          user.shopName?.trim() ||
+          `${user.firstName} ${user.lastName}`.trim() ||
+          user.username,
+        territoryId: user.territoryId,
+        territoryName: user.territory?.name ?? 'Unassigned',
+        warehouseId: user.warehouseId,
+        warehouseName: user.warehouse?.name ?? user.warehouseName ?? 'Unassigned',
+        rating: null,
+        comment: feedback.message?.trim() ?? '',
+        sourceType: 'VISIT_FEEDBACK',
+      });
+    }
+
+    return rows.filter(
+      (row) =>
+        this.isInRange(row.feedbackDate, filters) && this.matchesFilters(row, filters),
+    );
+  }
+
+  private buildSalesRepIssueRows(
+    incidents: SalesIncident[],
+    dailyReports: DailyReport[],
+    users: User[],
+    shopContext: ShopReferenceContext,
+    filters: InsightFilters,
+  ) {
+    const usersById = new Map(users.map((user) => [user.id, user]));
+    const rows: SalesRepIssueObservation[] = [];
+
+    for (const incident of incidents) {
+      const salesRep = usersById.get(incident.salesRepId);
+      const shop = incident.shopId
+        ? shopContext.rowsByCanonicalId.get(
+            shopContext.canonicalByOutletId.get(incident.shopId) ?? '',
+          ) ?? null
+        : null;
+
+      rows.push({
+        issueId: incident.id,
+        issueDate: this.dateKey(incident.createdAt),
+        salesRepId: incident.salesRepId,
+        salesRepName:
+          `${salesRep?.firstName ?? ''} ${salesRep?.lastName ?? ''}`.trim() ||
+          salesRep?.username ||
+          'Unknown sales rep',
+        territoryId: shop?.territoryId ?? salesRep?.territoryId ?? null,
+        territoryName: shop?.territoryName ?? salesRep?.territory?.name ?? 'Unassigned',
+        warehouseId: shop?.warehouseId ?? salesRep?.warehouseId ?? null,
+        warehouseName:
+          shop?.warehouseName ??
+          salesRep?.warehouse?.name ??
+          salesRep?.warehouseName ??
+          'Unassigned',
+        issueType: incident.incidentType,
+        severity: incident.severity,
+        summary: incident.description?.trim() || incident.incidentType,
+        sourceType: 'SALES_INCIDENT',
+      });
+    }
+
+    for (const report of dailyReports) {
+      const salesRep = usersById.get(report.salesRepId);
+      const incidentCount = this.readNumber(
+        (report.incidentSummaryJson as Record<string, unknown> | null)?.incidentCount,
+      );
+      const osaCount = this.readNumber(
+        (report.osaSummaryJson as Record<string, unknown> | null)?.issueCount,
+      );
+      const summaryParts = [report.repComments?.trim() ?? ''];
+      if (incidentCount > 0) {
+        summaryParts.push(`${incidentCount} incident(s) logged`);
+      }
+      if (osaCount > 0) {
+        summaryParts.push(`${osaCount} OSA issue(s) logged`);
+      }
+      const summary = summaryParts.filter(Boolean).join(' | ');
+      if (!summary) {
+        continue;
+      }
+      rows.push({
+        issueId: report.id,
+        issueDate: report.reportDate,
+        salesRepId: report.salesRepId,
+        salesRepName:
+          `${salesRep?.firstName ?? ''} ${salesRep?.lastName ?? ''}`.trim() ||
+          salesRep?.username ||
+          'Unknown sales rep',
+        territoryId: salesRep?.territoryId ?? null,
+        territoryName: salesRep?.territory?.name ?? 'Unassigned',
+        warehouseId: salesRep?.warehouseId ?? null,
+        warehouseName:
+          salesRep?.warehouse?.name ?? salesRep?.warehouseName ?? 'Unassigned',
+        issueType: 'DAILY_REPORT_ISSUE',
+        severity: this.inferDailyReportSeverity(report.repComments ?? ''),
+        summary,
+        sourceType: 'DAILY_REPORT',
+      });
+    }
+
+    return rows.filter(
+      (row) =>
+        this.isInRange(row.issueDate, filters) && this.matchesFilters(row, filters),
+    );
   }
 
   private buildReportAndIncidentSignals(

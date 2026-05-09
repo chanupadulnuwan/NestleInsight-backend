@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { ActivityLog } from '../activity/entities/activity.entity';
+import { FeedbackSubmission } from '../activity/entities/feedback-submission.entity';
+import { OrderFeedback } from '../activity/entities/order-feedback.entity';
 import { AiWriterService } from '../ai-writer/ai-writer.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
@@ -29,10 +31,12 @@ import { InsightCenterService } from './insight-center.service';
     ForecastEngineModule,
     TypeOrmModule.forFeature([
       ActivityLog,
+      FeedbackSubmission,
       DailyReport,
       DeliveryAssignment,
       DeliveryAssignmentOrder,
       Order,
+      OrderFeedback,
       OrderReturn,
       Outlet,
       Product,
