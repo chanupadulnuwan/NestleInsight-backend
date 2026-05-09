@@ -23,6 +23,7 @@ import { WarehousesModule } from './warehouses/warehouses.module';
 import { SmartRouteModule } from './smart-route/smart-route.module';
 import { FieldMonitoringModule } from './field-monitoring/field-monitoring.module';
 import { ReportDashboardModule } from './report-dashboard/report-dashboard.module';
+import { ShopInsightsModule } from './shop-insights/shop-insights.module';
 
 @Module({
   imports: [
@@ -67,6 +68,7 @@ import { ReportDashboardModule } from './report-dashboard/report-dashboard.modul
     SmartRouteModule,
     FieldMonitoringModule,
     ReportDashboardModule,
+    ShopInsightsModule,
   ],
 })
 export class AppModule {}
