@@ -439,6 +439,7 @@ type InsightComplianceViolationRow = {
   violation_count: number;
   planogram_failures: number;
   posm_failures: number;
+  violated_rules: string[];
 };
 
 type InsightWarehouseRiskRow = {
@@ -2235,6 +2236,7 @@ export class InsightCenterService {
         expired_units: this.roundNumber(row.expired_units),
         total_loss_units: this.roundNumber(row.damaged_units + row.expired_units),
       }))
+      .filter((row) => row.total_loss_units > 0)
       .sort((left, right) => right.total_loss_units - left.total_loss_units)
       .slice(0, 8);
   }
@@ -2286,6 +2288,7 @@ export class InsightCenterService {
         total_loss_units: this.roundNumber(row.damaged_units + row.expired_units),
         affected_products: row.products.size,
       }))
+      .filter((row) => row.total_loss_units > 0)
       .sort((left, right) => right.total_loss_units - left.total_loss_units)
       .slice(0, 8);
   }
@@ -2496,6 +2499,7 @@ export class InsightCenterService {
           violation_count: 0,
           planogram_failures: 0,
           posm_failures: 0,
+          violated_rules: [] as string[],
         };
       existing.violation_count += 1;
       if (row.violationType === 'PLANOGRAM') {
@@ -2507,6 +2511,13 @@ export class InsightCenterService {
     }
 
     return [...grouped.values()]
+      .map((row) => ({
+        ...row,
+        violated_rules: [
+          row.planogram_failures > 0 ? 'Planogram not followed' : null,
+          row.posm_failures > 0 ? 'POSM missing or not compliant' : null,
+        ].filter((value): value is string => Boolean(value)),
+      }))
       .sort((left, right) => right.violation_count - left.violation_count)
       .slice(0, 8);
   }
@@ -2640,6 +2651,14 @@ export class InsightCenterService {
           ),
         };
       })
+      .filter(
+        (row) =>
+          row.risk_score > 0 ||
+          row.delivery_gap_cases > 0 ||
+          row.stockout_count > 0 ||
+          row.damage_units > 0 ||
+          row.warehouse_issue_count > 0,
+      )
       .sort((left, right) => right.risk_score - left.risk_score)
       .slice(0, 8);
   }
@@ -3128,6 +3147,18 @@ export class InsightCenterService {
       });
     }
 
+    for (const row of dashboard.charts.complianceViolations.slice(0, 10)) {
+      rows.push({
+        section: 'Marketing Rule Violations',
+        metric: row.shop_name,
+        value: row.violation_count,
+        unit: 'violations',
+        source_type: 'exact',
+        confidence_score: '',
+        notes: `${row.territory_name} | ${row.warehouse_name} | Rules: ${row.violated_rules.join(', ') || 'n/a'}`,
+      });
+    }
+
     for (const row of dashboard.charts.exceptions.slice(0, 20)) {
       rows.push({
         section: 'Exceptions',
@@ -3574,7 +3605,7 @@ export class InsightCenterService {
       dashboard.charts.complianceViolations.slice(0, 4).map((row) => ({
         title: `${row.shop_name} | ${row.violation_count} violations`,
         value: `${row.planogram_failures} planogram / ${row.posm_failures} POSM`,
-        detail: `${row.territory_name} | ${row.warehouse_name}`,
+        detail: `${row.territory_name} | ${row.warehouse_name} | Rules broken: ${row.violated_rules.join(', ')}`,
       })),
       pageWidth,
       '#fffaf4',
@@ -3995,6 +4026,7 @@ export class InsightCenterService {
     body: string,
     width: number,
   ) {
+    document.x = document.page.margins.left;
     document.fillColor('#243022').fontSize(18).text(title, {
       width,
     });
@@ -4013,7 +4045,8 @@ export class InsightCenterService {
     fillColor: string,
     strokeColor: string,
   ) {
-    const left = document.x;
+    const left = document.page.margins.left;
+    document.x = left;
     document.fontSize(14);
     const titleHeight = document.heightOfString(title, { width: width - 28 });
     document.fontSize(10);
@@ -4043,6 +4076,7 @@ export class InsightCenterService {
     }
     const estimatedHeight = 40 + items.length * 18;
     this.ensurePdfSpace(document, estimatedHeight);
+    document.x = document.page.margins.left;
     document.fillColor('#243022').fontSize(13).text(title, {
       width,
     });
@@ -4066,7 +4100,8 @@ export class InsightCenterService {
     const cardHeight = 78;
     const rows = Math.ceil(metrics.length / columns);
     this.ensurePdfSpace(document, rows * (cardHeight + gap) + 12);
-    const left = document.x;
+    const left = document.page.margins.left;
+    document.x = left;
     const top = document.y;
 
     metrics.forEach((kpi, index) => {
@@ -4107,18 +4142,35 @@ export class InsightCenterService {
     if (rows.length === 0) {
       return;
     }
-    const rowHeight = 54;
-    const totalHeight = 42 + rows.length * (rowHeight + 8);
-    this.ensurePdfSpace(document, totalHeight);
-    const left = document.x;
+    const left = document.page.margins.left;
+    document.x = left;
     const top = document.y;
+
+    const headerHeight = 40;
+    const measuredRows = rows.map((row) => {
+      document.fontSize(10)
+      const titleHeight = document.heightOfString(row.title, {
+        width: width - 120,
+      })
+      document.fontSize(8.5)
+      const detailHeight = document.heightOfString(row.detail, {
+        width: width - 24,
+      })
+      return {
+        ...row,
+        height: Math.max(54, 22 + titleHeight + detailHeight),
+      }
+    })
+    const totalHeight =
+      headerHeight + measuredRows.reduce((sum, row) => sum + row.height + 8, 0)
+    this.ensurePdfSpace(document, totalHeight)
 
     document.fillColor('#243022').fontSize(14).text(title, left, top, { width });
     document.fillColor('#5d6d60').fontSize(9).text(subtitle, left, top + 18, { width });
 
     let rowTop = top + 40;
-    for (const row of rows) {
-      document.roundedRect(left, rowTop, width, rowHeight, 10).fillAndStroke(fillColor, strokeColor);
+    for (const row of measuredRows) {
+      document.roundedRect(left, rowTop, width, row.height, 10).fillAndStroke(fillColor, strokeColor);
       document.fillColor('#243022').fontSize(10).text(row.title, left + 12, rowTop + 10, {
         width: width - 120,
       });
@@ -4129,7 +4181,7 @@ export class InsightCenterService {
       document.fillColor('#6d645c').fontSize(8.5).text(row.detail, left + 12, rowTop + 26, {
         width: width - 24,
       });
-      rowTop += rowHeight + 8;
+      rowTop += row.height + 8;
     }
 
     document.y = rowTop + 2;
@@ -4148,7 +4200,8 @@ export class InsightCenterService {
 
     const chartHeight = 228;
     this.ensurePdfSpace(document, chartHeight + 16);
-    const left = document.x;
+    const left = document.page.margins.left;
+    document.x = left;
     const top = document.y;
     const plotLeft = left + 44;
     const plotRight = left + width - 10;
@@ -4281,7 +4334,8 @@ export class InsightCenterService {
 
     const chartHeight = 220;
     this.ensurePdfSpace(document, chartHeight + 16);
-    const left = document.x;
+    const left = document.page.margins.left;
+    document.x = left;
     const top = document.y;
     const plotLeft = left + 42;
     const plotRight = left + width - 10;
@@ -4365,7 +4419,8 @@ export class InsightCenterService {
     const rowHeight = 22;
     const chartHeight = 60 + rows.length * rowHeight;
     this.ensurePdfSpace(document, chartHeight + 12);
-    const left = document.x;
+    const left = document.page.margins.left;
+    document.x = left;
     const top = document.y;
     const labelWidth = 175;
     const barLeft = left + labelWidth;
