@@ -1,4 +1,6 @@
 import { ActivityLog } from '../activity/entities/activity.entity';
+import { AdminReportReview } from '../report-dashboard/entities/admin-report-review.entity';
+import { DemandPlannerReport } from '../report-dashboard/entities/demand-planner-report.entity';
 import { FeedbackSubmission } from '../activity/entities/feedback-submission.entity';
 import { Category } from '../categories/entities/category.entity';
 import { DailyReport } from '../daily-reports/entities/daily-report.entity';
@@ -23,6 +25,8 @@ import { Warehouse } from '../warehouses/entities/warehouse.entity';
 // Standalone database scripts do not benefit from Nest's autoLoadEntities.
 export const databaseEntities = [
   ActivityLog,
+  AdminReportReview,
+  DemandPlannerReport,
   FeedbackSubmission,
   Category,
   DailyReport,

@@ -24,7 +24,7 @@ export class WarehousesController {
 
   @Get()
   @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN, Role.REGIONAL_MANAGER, Role.SALES_REP)
+  @Roles(Role.ADMIN, Role.REGIONAL_MANAGER, Role.SALES_REP, Role.DEMAND_PLANNER)
   listWarehouses(
     @Query('territoryId') territoryId?: string,
     @Query('search') search?: string,
@@ -39,7 +39,7 @@ export class WarehousesController {
 
   @Get(':id')
   @UseGuards(JwtAuthGuard, RolesGuard, PortalApprovalGuard)
-  @Roles(Role.ADMIN, Role.REGIONAL_MANAGER)
+  @Roles(Role.ADMIN, Role.REGIONAL_MANAGER, Role.DEMAND_PLANNER)
   getWarehouseDetails(
     @Param('id') warehouseId: string,
     @Query('orderWindow') orderWindow?: string,
