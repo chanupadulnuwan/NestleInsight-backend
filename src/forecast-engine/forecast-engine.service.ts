@@ -956,12 +956,17 @@ export class ForecastEngineService {
           reasons.push('Demand and stock are broadly balanced across the selected horizon.');
         }
 
+        const noAdditionalManufactureNeeded = recommendedProductionCases <= 0;
         const reasonSummary =
-          action === 'INCREASE'
-            ? `Manufacture ${formatCases(recommendedProductionCases)} cases of ${group.product_name} across the horizon to cover projected demand and safety stock.`
-            : action === 'DECREASE'
-              ? `Manufacture ${formatCases(recommendedProductionCases)} additional cases of ${group.product_name}; current stock already covers most of the horizon.`
-              : `Manufacture about ${formatCases(recommendedProductionCases)} cases of ${group.product_name} while holding the current pace and watching local demand changes.`;
+          noAdditionalManufactureNeeded && plannerForecastCases <= 0
+            ? `No additional manufacture is required for ${group.product_name} because the selected horizon is currently forecasting 0 cases.`
+            : noAdditionalManufactureNeeded
+              ? `No additional manufacture is required for ${group.product_name}. Current stock of ${formatCases(currentStockCases)} cases already covers the ${formatCases(requiredCases)} cases needed across the horizon.`
+              : action === 'INCREASE'
+                ? `Manufacture ${formatCases(recommendedProductionCases)} cases of ${group.product_name} across the horizon to cover projected demand and safety stock.`
+                : action === 'DECREASE'
+                  ? `Manufacture ${formatCases(recommendedProductionCases)} additional cases of ${group.product_name}; current stock already covers most of the horizon.`
+                  : `Manufacture about ${formatCases(recommendedProductionCases)} cases of ${group.product_name} while holding the current pace and watching local demand changes.`;
 
         return {
           recommendation_id: `${group.product_id}|${action}`,
@@ -1079,6 +1084,18 @@ export class ForecastEngineService {
     const topIncrease = recommendations.find(
       (recommendation) => recommendation.action === 'INCREASE',
     );
+    const totalRequiredCases = this.roundNumber(
+      recommendations.reduce(
+        (sum, recommendation) => sum + recommendation.required_cases,
+        0,
+      ),
+    );
+    const totalCurrentStockCases = this.roundNumber(
+      recommendations.reduce(
+        (sum, recommendation) => sum + recommendation.current_stock_cases,
+        0,
+      ),
+    );
     const cautionCount = recommendations.filter(
       (recommendation) =>
         recommendation.urgency !== 'LOW' ||
@@ -1102,7 +1119,7 @@ export class ForecastEngineService {
       executiveSummary:
         topIncrease
           ? `${topIncrease.product_name} shows the clearest production gap, with about ${formatCases(topIncrease.recommended_production_cases)} cases to build across the horizon. Overall forecast quality is ${confidenceText}.`
-          : `No product is showing an immediate build gap large enough to force a manufacturing increase. Overall forecast quality is ${confidenceText}.`,
+          : `No product is showing an immediate build gap large enough to force a manufacturing increase. Required cases across the visible scope are about ${formatCases(totalRequiredCases)}, while current stock already sits near ${formatCases(totalCurrentStockCases)} cases. Overall forecast quality is ${confidenceText}.`,
       topics: [
         {
           title: 'What the forecast is saying',
@@ -1345,7 +1362,11 @@ export class ForecastEngineService {
         .fillColor('#243022')
         .fontSize(11)
         .text(
-          `Manufacture ${formatCases(recommendation.recommended_production_cases)} cases of ${recommendation.product_name} | ${recommendation.action} | ${recommendation.urgency}`,
+          `${
+            recommendation.recommended_production_cases > 0
+              ? `Manufacture ${formatCases(recommendation.recommended_production_cases)} cases of ${recommendation.product_name}`
+              : `No additional manufacture needed for ${recommendation.product_name}`
+          } | ${recommendation.action} | ${recommendation.urgency}`,
           document.x + 12,
           document.y + 10,
           { width: pageWidth - 24 },

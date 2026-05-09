@@ -1,8 +1,14 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
+import PDFDocument from 'pdfkit';
 import { Repository } from 'typeorm';
 
 import { ActivityLog } from '../activity/entities/activity.entity';
+import {
+  AiWriterService,
+  type InsightWriterRequest,
+  type InsightWriterResponse,
+} from '../ai-writer/ai-writer.service';
 import { Role } from '../common/enums/role.enum';
 import { DailyReport } from '../daily-reports/entities/daily-report.entity';
 import { DeliveryAssignmentOrder } from '../delivery-assignments/entities/delivery-assignment-order.entity';
@@ -273,6 +279,22 @@ type ForecastDataset = Awaited<
   ReturnType<ForecastEngineService['generateForecastData']>
 >;
 
+type InsightDashboard = Awaited<
+  ReturnType<InsightCenterService['generateDashboard']>
+>;
+
+type InsightReportNarrative = {
+  reportTitle: string;
+  headline: string;
+  executiveSummary: string;
+  storyOfTheNumbers: string;
+  anomalyExplanation: string;
+  managementRecommendation: string;
+  sectionTitles: string[];
+  chartCaptions: string[];
+  callouts: string[];
+};
+
 const ORDER_DEMAND_STATUSES = new Set([
   'PLACED',
   'APPROVED',
@@ -321,6 +343,7 @@ export class InsightCenterService {
     @InjectRepository(Warehouse)
     private readonly warehousesRepo: Repository<Warehouse>,
     private readonly forecastEngineService: ForecastEngineService,
+    private readonly aiWriterService: AiWriterService,
   ) {}
 
   async generateDashboard(query: InsightCenterQuery) {
@@ -385,31 +408,11 @@ export class InsightCenterService {
   async generatePdfReport(query: InsightCenterQuery) {
     const dashboard = await this.generateDashboard(query);
     const filename = `demand_planner_insight_center_${dashboard.summary.generatedAt.slice(0, 10)}.pdf`;
-    const lines = [
-      'Demand Planner Insight Center',
-      `Generated: ${dashboard.summary.generatedAt}`,
-      `Window: ${dashboard.summary.historyStartDate} to ${dashboard.summary.historyEndDate}`,
-      '',
-      dashboard.summary.dataIntegrityWarning,
-      '',
-      'AI Insight Summary',
-      ...dashboard.summary.aiSummary.map((summary: string) => `- ${summary}`),
-      '',
-      'KPI Snapshot',
-      ...dashboard.kpis.map(
-        (kpi: KpiCard) =>
-          `- ${kpi.label}: ${this.roundNumber(kpi.value)} ${kpi.unit} (${kpi.sourceType})`,
-      ),
-      '',
-      'Top Actions',
-      ...dashboard.charts.exceptions
-        .slice(0, 8)
-        .map((row: Record<string, unknown>) => `- ${row.recommended_action}`),
-    ].slice(0, 52);
+    const narrative = await this.buildInsightReportNarrative(dashboard);
 
     return {
       filename,
-      buffer: this.createSimplePdf(lines),
+      buffer: await this.createInsightPdf(dashboard, narrative),
     };
   }
 
@@ -1359,6 +1362,9 @@ export class InsightCenterService {
       territoryHeatmap: this.buildTerritoryHeatmap(dataset),
       demandSplit: this.buildDemandSplit(dataset),
       promotionImpact: this.buildPromotionImpact(dataset),
+      productMomentum: this.buildProductMomentum(dataset),
+      customerSalesByProduct: this.buildCustomerSalesByProduct(dataset),
+      orderVsCustomerSales: this.buildOrderVsCustomerSales(dataset),
       stockoutImpact: this.buildStockoutImpact(dataset),
       competitorPressure: this.buildCompetitorPressure(dataset),
       feedbackThemes: this.buildFeedbackThemes(dataset),
@@ -1453,6 +1459,146 @@ export class InsightCenterService {
           row.confidence_score || forecastDataset.summary.averageConfidenceScore,
         ),
       }));
+  }
+
+  private buildProductMomentum(dataset: OperationalDataset) {
+    const grouped = new Map<
+      string,
+      {
+        product_id: string;
+        product_name: string;
+        ordered_cases: number;
+        delivered_cases: number;
+        estimated_retail_offtake_cases: number;
+      }
+    >();
+
+    const ensure = (productId: string, productName: string) => {
+      const existing = grouped.get(productId);
+      if (existing) return existing;
+      const next = {
+        product_id: productId,
+        product_name: productName,
+        ordered_cases: 0,
+        delivered_cases: 0,
+        estimated_retail_offtake_cases: 0,
+      };
+      grouped.set(productId, next);
+      return next;
+    };
+
+    for (const event of dataset.orderEvents) {
+      ensure(event.productId, event.productName).ordered_cases += event.quantityCases;
+    }
+    for (const event of dataset.deliveryEvents) {
+      ensure(event.productId, event.productName).delivered_cases += event.quantityCases;
+    }
+    for (const row of dataset.retailOfftakeRows) {
+      ensure(row.productId, row.productName).estimated_retail_offtake_cases +=
+        row.estimatedSoldCases;
+    }
+
+    const ranked = [...grouped.values()]
+      .map((row) => ({
+        ...row,
+        demand_signal_cases: this.roundNumber(
+          Math.max(row.ordered_cases, row.estimated_retail_offtake_cases),
+        ),
+      }))
+      .filter((row) => row.demand_signal_cases > 0)
+      .sort((left, right) => right.demand_signal_cases - left.demand_signal_cases);
+
+    return {
+      highest: ranked.slice(0, 5),
+      lowest: [...ranked].reverse().slice(0, 5).reverse(),
+    };
+  }
+
+  private buildCustomerSalesByProduct(dataset: OperationalDataset) {
+    const grouped = new Map<
+      string,
+      {
+        product_id: string;
+        product_name: string;
+        estimated_retail_offtake_cases: number;
+        confidenceValues: number[];
+      }
+    >();
+
+    for (const row of dataset.retailOfftakeRows) {
+      const existing =
+        grouped.get(row.productId) ??
+        {
+          product_id: row.productId,
+          product_name: row.productName,
+          estimated_retail_offtake_cases: 0,
+          confidenceValues: [] as number[],
+        };
+      existing.estimated_retail_offtake_cases += row.estimatedSoldCases;
+      existing.confidenceValues.push(row.confidenceScore);
+      grouped.set(row.productId, existing);
+    }
+
+    return [...grouped.values()]
+      .map((row) => ({
+        ...row,
+        estimated_retail_offtake_cases: this.roundNumber(
+          row.estimated_retail_offtake_cases,
+        ),
+        confidence_score: this.roundNumber(this.average(row.confidenceValues)),
+      }))
+      .sort(
+        (left, right) =>
+          right.estimated_retail_offtake_cases - left.estimated_retail_offtake_cases,
+      )
+      .slice(0, 10);
+  }
+
+  private buildOrderVsCustomerSales(dataset: OperationalDataset) {
+    const grouped = new Map<
+      string,
+      {
+        product_id: string;
+        product_name: string;
+        ordered_cases: number;
+        estimated_retail_offtake_cases: number;
+      }
+    >();
+
+    const ensure = (productId: string, productName: string) => {
+      const existing = grouped.get(productId);
+      if (existing) return existing;
+      const next = {
+        product_id: productId,
+        product_name: productName,
+        ordered_cases: 0,
+        estimated_retail_offtake_cases: 0,
+      };
+      grouped.set(productId, next);
+      return next;
+    };
+
+    for (const event of dataset.orderEvents) {
+      ensure(event.productId, event.productName).ordered_cases += event.quantityCases;
+    }
+    for (const row of dataset.retailOfftakeRows) {
+      ensure(row.productId, row.productName).estimated_retail_offtake_cases +=
+        row.estimatedSoldCases;
+    }
+
+    return [...grouped.values()]
+      .map((row) => ({
+        ...row,
+        ordered_cases: this.roundNumber(row.ordered_cases),
+        estimated_retail_offtake_cases: this.roundNumber(
+          row.estimated_retail_offtake_cases,
+        ),
+        gap_cases: this.roundNumber(
+          row.ordered_cases - row.estimated_retail_offtake_cases,
+        ),
+      }))
+      .sort((left, right) => Math.abs(right.gap_cases) - Math.abs(left.gap_cases))
+      .slice(0, 10);
   }
 
   private buildTerritoryHeatmap(dataset: OperationalDataset) {
@@ -1986,6 +2132,638 @@ export class InsightCenterService {
     }
 
     return rows;
+  }
+
+  private async buildInsightReportNarrative(
+    dashboard: InsightDashboard,
+  ): Promise<InsightReportNarrative> {
+    const metricMap = new Map(
+      dashboard.kpis.map((kpi) => [kpi.key, `${this.roundNumber(kpi.value)} ${kpi.unit}`]),
+    );
+    const topMomentum = dashboard.charts.productMomentum.highest[0];
+    const weakestMomentum = dashboard.charts.productMomentum.lowest[0];
+    const topSalesProduct = dashboard.charts.customerSalesByProduct[0];
+    const topGapProduct = dashboard.charts.orderVsCustomerSales[0];
+    const actions = [
+      ...new Set(
+        dashboard.charts.exceptions
+          .slice(0, 6)
+          .map((row: Record<string, unknown>) =>
+            String(row.recommended_action || '').trim(),
+          )
+          .filter(Boolean),
+      ),
+    ];
+    const anomalies = dashboard.charts.exceptions
+      .slice(0, 6)
+      .map((row: Record<string, unknown>) => String(row.reason || '').trim())
+      .filter(Boolean);
+
+    const request: InsightWriterRequest = {
+      reportType: 'insight_center',
+      audience: 'demand_planner',
+      window: {
+        fromDate: dashboard.summary.historyStartDate,
+        toDate: dashboard.summary.historyEndDate,
+      },
+      filters: {
+        period: dashboard.summary.period,
+        granularity: dashboard.summary.granularity,
+        demandType: dashboard.summary.demandType,
+        viewMode: dashboard.summary.viewMode,
+        confidenceLevel: dashboard.summary.confidenceLevel,
+        compareMode: dashboard.summary.compareMode,
+      },
+      metrics: {
+        totalOrderedCases: metricMap.get('total_ordered_cases') ?? null,
+        totalDeliveredCases: metricMap.get('total_delivered_cases') ?? null,
+        estimatedRetailOfftake: metricMap.get('estimated_retail_offtake') ?? null,
+        forecastNextPeriod: metricMap.get('forecast_next_period') ?? null,
+        stockoutRate: metricMap.get('stockout_rate') ?? null,
+        activeOutlets: metricMap.get('active_outlets') ?? null,
+        activeTerritories: metricMap.get('active_territories') ?? null,
+        verifiedVisits: metricMap.get('verified_visits') ?? null,
+      },
+      charts: [
+        {
+          title: 'Order and demand trend',
+          purpose: 'Explain how ordered cases, delivered cases, retail offtake, and forecast moved through the selected window.',
+          dataSummary:
+            dashboard.charts.trend.length > 0
+              ? `The trend chart contains ${dashboard.charts.trend.length} buckets from ${dashboard.summary.historyStartDate} to ${dashboard.summary.historyEndDate}.`
+              : 'No trend buckets were available.',
+        },
+        {
+          title: 'Promotion impact',
+          purpose: 'Compare baseline versus promotion-active movement for ordering and customer offtake.',
+          dataSummary:
+            dashboard.charts.promotionImpact.length > 0
+              ? dashboard.charts.promotionImpact
+                  .map(
+                    (row: Record<string, unknown>) =>
+                      `${row.phase}: orders ${row.ordered_cases}, customer sales ${row.estimated_retail_offtake_cases}`,
+                  )
+                  .join(' | ')
+              : 'No promotion impact rows were available.',
+        },
+        {
+          title: 'Product momentum',
+          purpose: 'Highlight the strongest and weakest-moving products in the selected window.',
+          dataSummary: topMomentum
+            ? `Highest movement: ${topMomentum.product_name} at ${this.roundNumber(topMomentum.demand_signal_cases)} cases. Lowest movement: ${weakestMomentum?.product_name ?? 'n/a'} at ${this.roundNumber(weakestMomentum?.demand_signal_cases ?? 0)} cases.`
+            : 'No product momentum rows were available.',
+        },
+        {
+          title: 'Order versus customer sales',
+          purpose: 'Show which products have the largest gap between ordering and estimated customer movement.',
+          dataSummary: topGapProduct
+            ? `${topGapProduct.product_name} shows the largest gap at ${this.roundNumber(topGapProduct.gap_cases)} cases.`
+            : 'No order-versus-customer-sales rows were available.',
+        },
+      ],
+      anomalies,
+      recommendedActions: actions,
+    };
+
+    try {
+      const narrative = await this.aiWriterService.writeInsightCenterNarrative(
+        request,
+      );
+      if (narrative) {
+        return narrative;
+      }
+    } catch {
+      // Fall back to deterministic wording when the external writer is unavailable.
+    }
+
+    return {
+      reportTitle: 'Demand Planner Insight Report',
+      headline: topGapProduct
+        ? `${topGapProduct.product_name} is showing the clearest gap between ordering and customer movement in the selected window.`
+        : 'The selected window highlights demand movement, fulfilment gaps, and planner caution points.',
+      executiveSummary: dashboard.summary.aiSummary.join(' '),
+      storyOfTheNumbers: [
+        metricMap.get('total_ordered_cases')
+          ? `Ordered demand reached ${metricMap.get('total_ordered_cases')}, while delivered movement reached ${metricMap.get('total_delivered_cases')}.`
+          : null,
+        topSalesProduct
+          ? `${topSalesProduct.product_name} leads estimated customer movement at ${this.roundNumber(topSalesProduct.estimated_retail_offtake_cases)} cases.`
+          : null,
+        topMomentum
+          ? `${topMomentum.product_name} is currently the strongest-moving product in the selected window.`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(' '),
+      anomalyExplanation: anomalies[0]
+        ? `The main anomaly to investigate is: ${anomalies[0]}`
+        : 'No major anomaly text was available beyond the current KPI and exception set.',
+      managementRecommendation: actions[0]
+        ? `Recommended planner action: ${actions[0]}`
+        : 'Use the KPI, trend, and exception charts together before committing a planning change.',
+      sectionTitles: [
+        'Executive summary',
+        'Demand and fulfilment trend',
+        'Promotion and product movement',
+        'Gap and exception watchlist',
+      ],
+      chartCaptions: [
+        'Orders, deliveries, customer movement, and forecast are shown across the selected time window.',
+        'Promotion-active phases are compared against baseline movement.',
+        'The report highlights both the strongest and weakest-moving products.',
+        'Ordering is compared against estimated customer sales to show demand mismatches.',
+      ],
+      callouts: dashboard.summary.aiSummary.slice(0, 4),
+    };
+  }
+
+  private async createInsightPdf(
+    dashboard: InsightDashboard,
+    narrative: InsightReportNarrative,
+  ) {
+    const document = new PDFDocument({
+      size: 'A4',
+      margin: 42,
+      info: {
+        Title: narrative.reportTitle,
+        Author: 'Nestle Insight Demand Planner Portal',
+      },
+    });
+    const chunks: Buffer[] = [];
+    document.on('data', (chunk: Buffer) => chunks.push(chunk));
+    const pageWidth =
+      document.page.width - document.page.margins.left - document.page.margins.right;
+
+    const drawMetricCard = (
+      x: number,
+      y: number,
+      width: number,
+      label: string,
+      value: string,
+      caption: string,
+    ) => {
+      document.roundedRect(x, y, width, 72, 10).fillAndStroke('#f8fbf5', '#d7e4d2');
+      document.fillColor('#687561').fontSize(9).text(label, x + 10, y + 10, {
+        width: width - 20,
+      });
+      document.fillColor('#243022').fontSize(16).text(value, x + 10, y + 26, {
+        width: width - 20,
+      });
+      document.fillColor('#6d645c').fontSize(8).text(caption, x + 10, y + 48, {
+        width: width - 20,
+      });
+    };
+
+    document.fillColor('#6f8566').fontSize(11).text('DEMAND PLANNER INSIGHT REPORT');
+    document.moveDown(0.35);
+    document.fillColor('#243022').fontSize(24).text(narrative.reportTitle, {
+      width: pageWidth,
+    });
+    document.moveDown(0.35);
+    document.fillColor('#51604d').fontSize(10).text(
+      `Generated ${dashboard.summary.generatedAt.slice(0, 10)} | Window ${dashboard.summary.historyStartDate} to ${dashboard.summary.historyEndDate} | ${dashboard.summary.granularity} view`,
+      { width: pageWidth },
+    );
+
+    document.moveDown(0.8);
+    document.roundedRect(document.x, document.y, pageWidth, 76, 12).fillAndStroke(
+      '#eef6f2',
+      '#d6e4de',
+    );
+    document.fillColor('#243022').fontSize(15).text(
+      narrative.headline,
+      document.x + 14,
+      document.y + 12,
+      { width: pageWidth - 28 },
+    );
+    document.fillColor('#5d6d60').fontSize(10).text(
+      narrative.executiveSummary,
+      document.x + 14,
+      document.y + 34,
+      { width: pageWidth - 28 },
+    );
+
+    document.y += 92;
+    document
+      .fillColor('#7b8f75')
+      .fontSize(10)
+      .text('Data integrity note', { width: pageWidth });
+    document
+      .moveDown(0.2)
+      .fillColor('#6d645c')
+      .fontSize(10)
+      .text(dashboard.summary.dataIntegrityWarning, { width: pageWidth });
+
+    const metricCards = dashboard.kpis.slice(0, 6);
+    const metricWidth = (pageWidth - 16) / 3;
+    const metricBaseY = document.y + 18;
+    metricCards.forEach((kpi, index) => {
+      const row = Math.floor(index / 3);
+      const column = index % 3;
+      drawMetricCard(
+        document.x + column * (metricWidth + 8),
+        metricBaseY + row * 82,
+        metricWidth,
+        kpi.label,
+        `${this.roundNumber(kpi.value)} ${kpi.unit}`,
+        kpi.caption,
+      );
+    });
+
+    document.y = metricBaseY + 172;
+    this.drawInsightTrendChart(document, dashboard.charts.trend.slice(-12), pageWidth);
+
+    document.addPage();
+    document.fillColor('#243022').fontSize(18).text(
+      narrative.sectionTitles[1] ?? 'Promotion and product movement',
+      { width: pageWidth },
+    );
+    document.moveDown(0.3);
+    document.fillColor('#5d6d60').fontSize(10).text(
+      narrative.storyOfTheNumbers,
+      { width: pageWidth },
+    );
+    document.moveDown(0.6);
+    this.drawGroupedBarChart(
+      document,
+      dashboard.charts.promotionImpact,
+      pageWidth,
+      'Promotion impact on orders and customer sales',
+      narrative.chartCaptions[1] ??
+        'Promotion-active movement is compared against baseline demand.',
+      'phase',
+      [
+        { key: 'ordered_cases', label: 'Orders', color: '#5c7f56' },
+        {
+          key: 'estimated_retail_offtake_cases',
+          label: 'Customer sales',
+          color: '#b6793f',
+        },
+      ],
+    );
+    document.moveDown(0.8);
+    this.drawHorizontalBarChart(
+      document,
+      dashboard.charts.customerSalesByProduct.slice(0, 6),
+      pageWidth,
+      'Customer sales by product',
+      'Estimated Retail Offtake by product in the selected window.',
+      'product_name',
+      'estimated_retail_offtake_cases',
+      '#54715a',
+    );
+
+    document.addPage();
+    document.fillColor('#243022').fontSize(18).text(
+      narrative.sectionTitles[2] ?? 'Gap and exception watchlist',
+      { width: pageWidth },
+    );
+    document.moveDown(0.3);
+    document.fillColor('#5d6d60').fontSize(10).text(
+      narrative.anomalyExplanation,
+      { width: pageWidth },
+    );
+    document.moveDown(0.6);
+
+    const momentumRows = [
+      ...dashboard.charts.productMomentum.highest.map((row: Record<string, unknown>) => ({
+        product_name: `High: ${row.product_name}`,
+        demand_signal_cases: row.demand_signal_cases,
+      })),
+      ...dashboard.charts.productMomentum.lowest.map((row: Record<string, unknown>) => ({
+        product_name: `Low: ${row.product_name}`,
+        demand_signal_cases: row.demand_signal_cases,
+      })),
+    ];
+    this.drawHorizontalBarChart(
+      document,
+      momentumRows.slice(0, 8),
+      pageWidth,
+      'Highest and lowest product movement',
+      'Products are ranked by visible demand movement in the selected window.',
+      'product_name',
+      'demand_signal_cases',
+      '#8f6a3c',
+    );
+
+    document.moveDown(0.8);
+    this.drawGroupedBarChart(
+      document,
+      dashboard.charts.orderVsCustomerSales.slice(0, 6),
+      pageWidth,
+      'Ordering versus customer sales gap',
+      narrative.chartCaptions[3] ??
+        'Ordered cases are compared against estimated customer movement.',
+      'product_name',
+      [
+        { key: 'ordered_cases', label: 'Orders', color: '#5c7f56' },
+        {
+          key: 'estimated_retail_offtake_cases',
+          label: 'Customer sales',
+          color: '#b6793f',
+        },
+      ],
+    );
+
+    document.addPage();
+    document.fillColor('#243022').fontSize(18).text(
+      narrative.sectionTitles[3] ?? 'Management recommendation',
+      { width: pageWidth },
+    );
+    document.moveDown(0.3);
+    document.fillColor('#5d6d60').fontSize(10).text(
+      narrative.managementRecommendation,
+      { width: pageWidth },
+    );
+    document.moveDown(0.6);
+
+    document.fillColor('#243022').fontSize(14).text('Top planner actions', {
+      width: pageWidth,
+    });
+    document.moveDown(0.3);
+    for (const action of [
+      ...new Set(
+        dashboard.charts.exceptions
+          .slice(0, 8)
+          .map((row: Record<string, unknown>) =>
+            String(row.recommended_action || '').trim(),
+          )
+          .filter(Boolean),
+      ),
+    ].slice(0, 6)) {
+      document.fillColor('#5d6d60').fontSize(10).text(`• ${action}`, {
+        width: pageWidth,
+      });
+      document.moveDown(0.2);
+    }
+
+    document.moveDown(0.6);
+    document.fillColor('#243022').fontSize(14).text('Exception watchlist', {
+      width: pageWidth,
+    });
+    document.moveDown(0.3);
+    for (const row of dashboard.charts.exceptions.slice(0, 8)) {
+      document.roundedRect(document.x, document.y, pageWidth, 42, 10).fillAndStroke(
+        '#fffaf4',
+        '#eadfd3',
+      );
+      document.fillColor('#243022').fontSize(10).text(
+        `${row.exception_type} | ${row.severity}`,
+        document.x + 10,
+        document.y + 8,
+        { width: pageWidth - 20 },
+      );
+      document.fillColor('#6d645c').fontSize(9).text(
+        `${row.reason}`,
+        document.x + 10,
+        document.y + 22,
+        { width: pageWidth - 20 },
+      );
+      document.y += 50;
+    }
+
+    document.end();
+    return await new Promise<Buffer>((resolve) => {
+      document.on('end', () => resolve(Buffer.concat(chunks)));
+    });
+  }
+
+  private drawInsightTrendChart(document: any, rows: Record<string, unknown>[], width: number) {
+    if (rows.length === 0) {
+      return;
+    }
+
+    const chartHeight = 220;
+    const left = document.x;
+    const top = document.y;
+    const plotLeft = left + 44;
+    const plotRight = left + width - 10;
+    const plotTop = top + 46;
+    const plotBottom = top + chartHeight - 34;
+    const plotWidth = plotRight - plotLeft;
+    const plotHeight = plotBottom - plotTop;
+    const maxValue = Math.max(
+      1,
+      ...rows.flatMap((row) => [
+        Number(row.display_ordered_cases ?? row.ordered_cases ?? 0),
+        Number(row.display_delivered_cases ?? row.delivered_cases ?? 0),
+        Number(
+          row.display_estimated_retail_offtake_cases ??
+            row.estimated_retail_offtake_cases ??
+            0,
+        ),
+        Number(row.display_forecast_cases ?? row.forecast_cases ?? 0),
+      ]),
+    );
+    const spacing = rows.length > 1 ? plotWidth / (rows.length - 1) : 0;
+
+    document.fillColor('#243022').fontSize(14).text('Order and demand trend', left, top, {
+      width,
+    });
+    document.fillColor('#5d6d60').fontSize(10).text(
+      'Orders, deliveries, customer movement, and forecast are shown across the selected window.',
+      left,
+      top + 18,
+      { width },
+    );
+
+    document.lineWidth(1).strokeColor('#e8efe4');
+    for (let index = 0; index < 4; index += 1) {
+      const y = plotTop + (plotHeight / 3) * index;
+      document.moveTo(plotLeft, y).lineTo(plotRight, y).stroke();
+      document.fillColor('#7a8772').fontSize(8).text(
+        this.roundNumber(maxValue - (maxValue / 3) * index).toString(),
+        left,
+        y - 4,
+        { width: 34, align: 'right' },
+      );
+    }
+
+    const drawSeries = (color: string, extractor: (row: Record<string, unknown>) => number) => {
+      document.strokeColor(color).lineWidth(2);
+      rows.forEach((row, index) => {
+        const x = plotLeft + spacing * index;
+        const y = plotBottom - (extractor(row) / maxValue) * plotHeight;
+        if (index === 0) {
+          document.moveTo(x, y);
+        } else {
+          document.lineTo(x, y);
+        }
+      });
+      document.stroke();
+    };
+
+    drawSeries('#567454', (row) => Number(row.display_ordered_cases ?? row.ordered_cases ?? 0));
+    drawSeries('#8da69b', (row) =>
+      Number(row.display_delivered_cases ?? row.delivered_cases ?? 0),
+    );
+    drawSeries('#b6793f', (row) =>
+      Number(
+        row.display_estimated_retail_offtake_cases ??
+          row.estimated_retail_offtake_cases ??
+          0,
+      ),
+    );
+    drawSeries('#7c88a6', (row) => Number(row.display_forecast_cases ?? row.forecast_cases ?? 0));
+
+    const labelIndexes = [...new Set([0, Math.floor((rows.length - 1) / 2), rows.length - 1])];
+    labelIndexes.forEach((index) => {
+      const row = rows[index];
+      const x = plotLeft + spacing * index;
+      document.fillColor('#7a8772').fontSize(8).text(
+        String(row.label ?? row.date ?? ''),
+        x - 24,
+        plotBottom + 6,
+        {
+          width: 48,
+          align: 'center',
+        },
+      );
+    });
+
+    const legendY = plotBottom + 20;
+    [
+      ['#567454', 'Orders'],
+      ['#8da69b', 'Deliveries'],
+      ['#b6793f', 'Customer sales'],
+      ['#7c88a6', 'Forecast'],
+    ].forEach(([color, label], index) => {
+      document.fillColor(color).circle(left + index * 110 + 6, legendY + 4, 3).fill();
+      document.fillColor('#5d6d60').fontSize(8).text(label, left + index * 110 + 16, legendY, {
+        width: 84,
+      });
+    });
+
+    document.y = top + chartHeight;
+  }
+
+  private drawGroupedBarChart(
+    document: any,
+    rows: Record<string, unknown>[],
+    width: number,
+    title: string,
+    subtitle: string,
+    labelKey: string,
+    series: Array<{ key: string; label: string; color: string }>,
+  ) {
+    if (rows.length === 0) {
+      return;
+    }
+
+    const chartHeight = 210;
+    const left = document.x;
+    const top = document.y;
+    const plotLeft = left + 42;
+    const plotRight = left + width - 10;
+    const plotTop = top + 44;
+    const plotBottom = top + chartHeight - 40;
+    const plotWidth = plotRight - plotLeft;
+    const plotHeight = plotBottom - plotTop;
+    const maxValue = Math.max(
+      1,
+      ...rows.flatMap((row) =>
+        series.map((item) => Number(row[item.key] ?? 0)),
+      ),
+    );
+    const groupWidth = plotWidth / rows.length;
+    const barWidth = Math.max(8, Math.min(18, (groupWidth - 12) / series.length));
+
+    document.fillColor('#243022').fontSize(14).text(title, left, top, { width });
+    document.fillColor('#5d6d60').fontSize(10).text(subtitle, left, top + 18, { width });
+
+    document.lineWidth(1).strokeColor('#e8efe4');
+    for (let index = 0; index < 4; index += 1) {
+      const y = plotTop + (plotHeight / 3) * index;
+      document.moveTo(plotLeft, y).lineTo(plotRight, y).stroke();
+    }
+
+    rows.forEach((row, rowIndex) => {
+      const baseX = plotLeft + rowIndex * groupWidth + 6;
+      series.forEach((item, seriesIndex) => {
+        const value = Number(row[item.key] ?? 0);
+        const barHeight = (value / maxValue) * plotHeight;
+        const x = baseX + seriesIndex * (barWidth + 4);
+        const y = plotBottom - barHeight;
+        document
+          .fillColor(item.color)
+          .rect(x, y, barWidth, barHeight)
+          .fill();
+      });
+
+      document.fillColor('#7a8772').fontSize(7).text(
+        this.truncateLabel(String(row[labelKey] ?? ''), 14),
+        baseX - 6,
+        plotBottom + 6,
+        {
+          width: groupWidth,
+          align: 'center',
+        },
+      );
+    });
+
+    const legendY = plotBottom + 20;
+    series.forEach((item, index) => {
+      document.fillColor(item.color).circle(left + index * 120 + 6, legendY + 4, 3).fill();
+      document.fillColor('#5d6d60').fontSize(8).text(item.label, left + index * 120 + 16, legendY, {
+        width: 96,
+      });
+    });
+
+    document.y = top + chartHeight;
+  }
+
+  private drawHorizontalBarChart(
+    document: any,
+    rows: Record<string, unknown>[],
+    width: number,
+    title: string,
+    subtitle: string,
+    labelKey: string,
+    valueKey: string,
+    color: string,
+  ) {
+    if (rows.length === 0) {
+      return;
+    }
+
+    const rowHeight = 22;
+    const chartHeight = 60 + rows.length * rowHeight;
+    const left = document.x;
+    const top = document.y;
+    const labelWidth = 170;
+    const barLeft = left + labelWidth;
+    const barRight = left + width - 48;
+    const barWidth = barRight - barLeft;
+    const maxValue = Math.max(1, ...rows.map((row) => Number(row[valueKey] ?? 0)));
+
+    document.fillColor('#243022').fontSize(14).text(title, left, top, { width });
+    document.fillColor('#5d6d60').fontSize(10).text(subtitle, left, top + 18, { width });
+
+    rows.forEach((row, index) => {
+      const y = top + 48 + index * rowHeight;
+      const value = Number(row[valueKey] ?? 0);
+      const widthValue = (value / maxValue) * barWidth;
+      document.fillColor('#687561').fontSize(8).text(
+        this.truncateLabel(String(row[labelKey] ?? ''), 30),
+        left,
+        y + 2,
+        { width: labelWidth - 8 },
+      );
+      document.roundedRect(barLeft, y + 4, barWidth, 10, 4).fillAndStroke('#f3f7f1', '#e0e9dc');
+      document.roundedRect(barLeft, y + 4, widthValue, 10, 4).fill(color);
+      document.fillColor('#243022').fontSize(8).text(
+        this.roundNumber(value).toString(),
+        barRight + 6,
+        y + 2,
+        { width: 40, align: 'right' },
+      );
+    });
+
+    document.y = top + chartHeight;
+  }
+
+  private truncateLabel(value: string, maxLength: number) {
+    return value.length <= maxLength ? value : `${value.slice(0, maxLength - 1)}…`;
   }
 
   private normalizeFilters(query: InsightCenterQuery): InsightFilters {

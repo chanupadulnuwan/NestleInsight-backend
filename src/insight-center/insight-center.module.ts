@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { ActivityLog } from '../activity/entities/activity.entity';
+import { AiWriterService } from '../ai-writer/ai-writer.service';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { DailyReport } from '../daily-reports/entities/daily-report.entity';
@@ -46,6 +47,6 @@ import { InsightCenterService } from './insight-center.service';
     ]),
   ],
   controllers: [InsightCenterController],
-  providers: [InsightCenterService, JwtAuthGuard, RolesGuard],
+  providers: [InsightCenterService, AiWriterService, JwtAuthGuard, RolesGuard],
 })
 export class InsightCenterModule {}
