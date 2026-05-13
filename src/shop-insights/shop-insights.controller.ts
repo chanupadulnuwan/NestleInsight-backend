@@ -13,7 +13,7 @@ export class ShopInsightsController {
   constructor(private readonly service: ShopInsightsService) {}
 
   @Get('my')
-  getMyInsights(@Req() req: any) {
+  getMyInsights(@Req() req: any): Promise<unknown> {
     return this.service.getMyInsights(req.user?.userId);
   }
 }
