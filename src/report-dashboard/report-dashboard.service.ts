@@ -34,23 +34,13 @@ export class ReportDashboardService {
   // --- Inbox ---
 
   async getInbox() {
-    const actionedReportIds = await this.reviewRepo
-      .createQueryBuilder('r')
-      .select('r.daily_report_id')
-      .where('r.status IN (:...statuses)', { statuses: ['SAVED', 'CRITICAL', 'WARNED'] })
-      .getRawMany()
-      .then((rows) => rows.map((row) => row.r_daily_report_id as string));
-
     const query = this.dailyReportRepo
       .createQueryBuilder('report')
       .leftJoinAndSelect('report.salesRep', 'salesRep')
       .leftJoin('report.route', 'route')
       .leftJoin('route.territory', 'territory')
-      .addSelect(['territory.id', 'territory.name']);
-
-    if (actionedReportIds.length > 0) {
-      query.andWhere('report.id NOT IN (:...ids)', { ids: actionedReportIds });
-    }
+      .addSelect(['territory.id', 'territory.name'])
+      .where('report.status = :status', { status: DailyReportStatus.SUBMITTED });
 
     const reports = await query
       .orderBy('COALESCE(report.submittedAt, report.updatedAt)', 'DESC')
@@ -347,7 +337,8 @@ export class ReportDashboardService {
       reportDate: report.reportDate,
       submittedAt: report.submittedAt,
       repComments: report.repComments,
-      isRead: review?.status === 'READ',
+      isRead: Boolean(review),
+      reviewStatus: review?.status ?? null,
       salesRep: {
         id: report.salesRep?.id ?? report.salesRepId,
         firstName: report.salesRep?.firstName ?? '',
