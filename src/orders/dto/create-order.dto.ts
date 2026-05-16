@@ -2,6 +2,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
+  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
@@ -43,4 +44,9 @@ export class CreateOrderDto {
   @IsNumber()
   @IsOptional()
   discountAmount?: number;
+
+  @IsString()
+  @IsOptional()
+  @IsIn(['STANDARD', 'CASH_ON_DELIVERY'])
+  paymentMethod?: string;
 }

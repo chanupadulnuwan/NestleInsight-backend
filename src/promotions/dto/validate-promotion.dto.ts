@@ -3,6 +3,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  IsUUID,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -20,7 +21,12 @@ export class CartItemDto {
 
 export class ValidatePromotionDto {
   @IsString()
-  code: string;
+  @IsOptional()
+  code?: string;
+
+  @IsUUID()
+  @IsOptional()
+  promotionId?: string;
 
   @IsString()
   territoryId: string;

@@ -21,6 +21,7 @@ import {
 } from '../sales-routes/entities/sales-route.entity';
 import { User } from '../users/entities/user.entity';
 import { UsersService } from '../users/users.service';
+import { PromotionsService } from '../promotions/promotions.service';
 import { ConfirmAssistedOrderPinDto } from './dto/confirm-assisted-order-pin.dto';
 import { CompleteSalesRepDeliveryDto } from './dto/complete-sales-rep-delivery.dto';
 import { CreateOrderDto } from './dto/create-order.dto';
@@ -90,6 +91,7 @@ export class OrdersService {
     private readonly vanLoadRequestsRepository: Repository<VanLoadRequest>,
     private readonly usersService: UsersService,
     private readonly activityService: ActivityService,
+    private readonly promotionsService: PromotionsService,
   ) {}
 
   async createCurrentUserOrder(userId: string, createOrderDto: CreateOrderDto) {
@@ -132,9 +134,47 @@ export class OrdersService {
       };
     });
 
-    const totalAmount = Number(
+    const subtotalBeforeDiscount = Number(
       normalizedItems.reduce((sum, item) => sum + item.lineTotal, 0).toFixed(2),
     );
+    const requestedPromotionId = createOrderDto.appliedPromotionId ?? null;
+    const requestedPromotionCode =
+      createOrderDto.appliedPromotionCode?.trim() || null;
+    const hasPromotionSelection =
+      !!requestedPromotionId ||
+      !!requestedPromotionCode ||
+      Number(createOrderDto.discountAmount ?? 0) > 0;
+    let appliedPromotionId: string | null = null;
+    let appliedPromotionCode: string | null = null;
+    let promotionDiscountTotal = 0;
+
+    if (hasPromotionSelection) {
+      const { promotion, discountAmount } =
+        await this.promotionsService.evaluatePromotionEligibility({
+          promotionId: requestedPromotionId,
+          code: requestedPromotionCode,
+          territoryId: user.territoryId ?? '',
+          shopId: user.id,
+          cartTotal: subtotalBeforeDiscount,
+          cartItems: normalizedItems.map((item) => ({
+            productId: item.productId,
+            quantity: item.quantity,
+          })),
+        });
+
+      appliedPromotionId = promotion.id;
+      appliedPromotionCode = promotion.code;
+      promotionDiscountTotal = discountAmount;
+    }
+
+    const totalAfterDiscount = Number(
+      Math.max(0, subtotalBeforeDiscount - promotionDiscountTotal).toFixed(2),
+    );
+    const paymentMethod =
+      createOrderDto.paymentMethod?.trim().toUpperCase() ===
+      'CASH_ON_DELIVERY'
+        ? 'CASH_ON_DELIVERY'
+        : 'STANDARD';
 
     const order = this.ordersRepository.create({
       orderCode: this.generateOrderCode(),
@@ -143,13 +183,29 @@ export class OrdersService {
       territoryId: user.territoryId,
       warehouseId: user.warehouseId,
       status: 'PLACED',
-      source: 'SALES_REP',
+      source: 'SHOP_OWNER',
+      paymentMethod,
       currencyCode: 'LKR',
-      totalAmount,
+      totalAmount: totalAfterDiscount,
+      appliedPromotionId,
+      appliedPromotionCode,
+      subtotalBeforeDiscount,
+      promotionDiscountTotal,
+      totalAfterDiscount,
       items: normalizedItems,
     });
 
     const savedOrder = await this.ordersRepository.save(order);
+
+    if (appliedPromotionId) {
+      await this.promotionsService.recordPromotionRedemption(
+        appliedPromotionId,
+        savedOrder.id,
+        user.id,
+        user.id,
+        promotionDiscountTotal,
+      );
+    }
 
     await this.activityService.logForUser({
       userId: user.id,
@@ -160,6 +216,10 @@ export class OrdersService {
         orderId: savedOrder.id,
         orderCode: savedOrder.orderCode,
         totalAmount: savedOrder.totalAmount,
+        subtotalBeforeDiscount: savedOrder.subtotalBeforeDiscount,
+        promotionDiscountTotal: savedOrder.promotionDiscountTotal,
+        appliedPromotionCode: savedOrder.appliedPromotionCode,
+        paymentMethod: savedOrder.paymentMethod,
         placedAt: savedOrder.placedAt.toISOString(),
       },
     });
@@ -1279,8 +1339,15 @@ export class OrdersService {
       warehouseId: order.warehouseId,
       warehouseName: order.warehouse?.name ?? null,
       status: order.status,
+      source: order.source,
+      paymentMethod: order.paymentMethod,
       currencyCode: order.currencyCode,
       totalAmount: order.totalAmount,
+      appliedPromotionId: order.appliedPromotionId,
+      appliedPromotionCode: order.appliedPromotionCode,
+      subtotalBeforeDiscount: order.subtotalBeforeDiscount,
+      promotionDiscountTotal: order.promotionDiscountTotal,
+      totalAfterDiscount: order.totalAfterDiscount,
       placedAt: order.placedAt,
       approvedAt: order.approvedAt,
       customerNote: order.customerNote,

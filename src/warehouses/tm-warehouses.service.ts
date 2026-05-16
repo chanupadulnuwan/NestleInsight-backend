@@ -113,6 +113,30 @@ export class TmWarehousesService {
       where: { status: ProductStatus.ACTIVE },
       order: { productName: 'ASC', packSize: 'ASC' },
     });
+    const inventory = warehouse.inventoryItems.map((item) => ({
+      id: item.id,
+      productId: item.productId,
+      productName: item.product?.productName ?? null,
+      sku: item.product?.sku ?? null,
+      packSize: item.product?.packSize ?? null,
+      imageUrl: item.product?.imageUrl ?? null,
+      casePrice: item.product?.casePrice ?? 0,
+      stockValue: Number(
+        ((item.product?.casePrice ?? 0) * item.quantityOnHand).toFixed(2),
+      ),
+      quantityOnHand: item.quantityOnHand,
+      reorderLevel: item.reorderLevel,
+      maxCapacityCases: item.maxCapacityCases,
+      status:
+        item.product?.status !== 'ACTIVE'
+          ? 'INACTIVE_PRODUCT'
+          : item.quantityOnHand <= item.reorderLevel
+            ? 'LOW_STOCK'
+            : 'HEALTHY',
+    }));
+    const totalStockValue = Number(
+      inventory.reduce((sum, item) => sum + item.stockValue, 0).toFixed(2),
+    );
 
     return {
       message: 'Warehouse details fetched.',
@@ -125,23 +149,18 @@ export class TmWarehousesService {
         longitude: warehouse.longitude,
         territoryId: warehouse.territoryId,
         territory: (warehouse as any).territory?.name ?? null,
-        inventory: warehouse.inventoryItems.map((item) => ({
-          id: item.id,
-          productId: item.productId,
-          productName: item.product?.productName ?? null,
-          sku: item.product?.sku ?? null,
-          packSize: item.product?.packSize ?? null,
-          imageUrl: item.product?.imageUrl ?? null,
-          quantityOnHand: item.quantityOnHand,
-          reorderLevel: item.reorderLevel,
-          maxCapacityCases: item.maxCapacityCases,
-          status:
-            item.product?.status !== 'ACTIVE'
-              ? 'INACTIVE_PRODUCT'
-              : item.quantityOnHand <= item.reorderLevel
-                ? 'LOW_STOCK'
-                : 'HEALTHY',
-        })),
+        inventory,
+        inventorySummary: {
+          trackedProducts: inventory.length,
+          totalCasesOnHand: inventory.reduce(
+            (sum, item) => sum + item.quantityOnHand,
+            0,
+          ),
+          totalStockValue,
+          lowStockProducts: inventory.filter(
+            (item) => item.status === 'LOW_STOCK',
+          ).length,
+        },
         vehicles: vehicles.map((v) => ({
           id: v.id,
           vehicleCode: v.vehicleCode,

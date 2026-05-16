@@ -1,6 +1,7 @@
 import {
   IsArray,
   IsInt,
+  IsNumber,
   IsOptional,
   IsString,
   IsUUID,
@@ -30,6 +31,19 @@ export class SubmitReturnDto {
   @IsString()
   @Length(6, 6)
   tmPin: string;
+
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  cashReturnedAmount: number;
+
+  @IsOptional()
+  @IsString()
+  cashVarianceType?: string;
+
+  @IsOptional()
+  @IsString()
+  cashVarianceReason?: string;
 
   @IsArray()
   @ValidateNested({ each: true })

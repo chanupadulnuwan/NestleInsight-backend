@@ -32,8 +32,11 @@ export class PromotionsController {
     Role.SALES_REP,
     Role.SHOP_OWNER,
   )
-  validatePromotion(@Body() dto: ValidatePromotionDto) {
-    return this.promotionsService.validatePromotion(dto);
+  validatePromotion(@Request() req: any, @Body() dto: ValidatePromotionDto) {
+    return this.promotionsService.validatePromotion({
+      ...dto,
+      shopId: dto.shopId ?? req.user?.userId,
+    });
   }
 
   @Post()

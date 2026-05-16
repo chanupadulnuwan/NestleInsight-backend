@@ -8,6 +8,7 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { ActivityLog } from '../activity/entities/activity.entity';
 import { Outlet } from '../outlets/entities/outlet.entity';
 import { Product } from '../products/entities/product.entity';
+import { PromotionsModule } from '../promotions/promotions.module';
 import { SalesRoute } from '../sales-routes/entities/sales-route.entity';
 import { User } from '../users/entities/user.entity';
 import { UsersModule } from '../users/users.module';
@@ -35,6 +36,7 @@ import { TmOrdersService } from './tm-orders.service';
     ]),
     UsersModule,
     ActivityModule,
+    PromotionsModule,
   ],
   controllers: [OrdersController, TmOrdersController],
   providers: [

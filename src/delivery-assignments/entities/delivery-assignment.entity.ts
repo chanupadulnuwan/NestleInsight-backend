@@ -67,6 +67,49 @@ export class DeliveryAssignment {
   @Column({ type: 'text', nullable: true })
   notes: string | null;
 
+  @Column({
+    name: 'expected_cash_amount',
+    type: 'double precision',
+    nullable: true,
+  })
+  expectedCashAmount: number | null;
+
+  @Column({
+    name: 'cash_returned_amount',
+    type: 'double precision',
+    nullable: true,
+  })
+  cashReturnedAmount: number | null;
+
+  @Column({
+    name: 'cash_variance_amount',
+    type: 'double precision',
+    nullable: true,
+  })
+  cashVarianceAmount: number | null;
+
+  @Column({
+    name: 'cash_variance_type',
+    type: 'varchar',
+    length: 40,
+    nullable: true,
+  })
+  cashVarianceType: string | null;
+
+  @Column({
+    name: 'cash_variance_reason',
+    type: 'text',
+    nullable: true,
+  })
+  cashVarianceReason: string | null;
+
+  @Column({
+    name: 'settlement_completed_at',
+    type: 'timestamp',
+    nullable: true,
+  })
+  settlementCompletedAt: Date | null;
+
   @OneToMany(() => DeliveryAssignmentOrder, (dao) => dao.assignment, {
     cascade: true,
     eager: true,

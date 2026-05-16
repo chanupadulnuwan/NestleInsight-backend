@@ -444,6 +444,15 @@ export class WarehousesService {
       const unitsPerCase = item.product?.productsPerCase ?? 0;
       return sum + item.quantityOnHand * unitsPerCase;
     }, 0);
+    const totalStockValue = Number(
+      inventoryItems
+        .reduce(
+          (sum, item) =>
+            sum + item.quantityOnHand * (item.product?.casePrice ?? 0),
+          0,
+        )
+        .toFixed(2),
+    );
 
     return {
       id: warehouse.id,
@@ -462,6 +471,7 @@ export class WarehousesService {
       inventoryItemCount: inventoryItems.length,
       inventoryCases: totalCasesOnHand,
       inventoryUnits: totalUnitsOnHand,
+      totalStockValue,
       createdAt: warehouse.createdAt,
       updatedAt: warehouse.updatedAt,
     };

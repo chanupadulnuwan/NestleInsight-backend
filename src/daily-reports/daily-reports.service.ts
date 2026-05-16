@@ -122,19 +122,22 @@ export class DailyReportsService {
     dto: UpdateReportDraftDto,
   ): Promise<DailyReport> {
     const report = await this.getMyReport(salesRepId, reportId);
-
-    if (report.status !== DailyReportStatus.DRAFT) {
-      throw new BadRequestException('Only draft reports can be updated.');
-    }
+    const isSubmitted = report.status === DailyReportStatus.SUBMITTED;
 
     report.repComments = dto.repComments?.trim() || null;
     const savedReport = await this.reportsRepo.save(report);
 
     await this.activityService.logForUser({
       userId: salesRepId,
-      type: 'DAILY_REPORT_DRAFT_UPDATED',
-      title: 'Daily report draft updated',
-      message: `Daily report draft for ${savedReport.reportDate} was updated.`,
+      type: isSubmitted
+        ? 'DAILY_REPORT_UPDATED_AFTER_SUBMIT'
+        : 'DAILY_REPORT_DRAFT_UPDATED',
+      title: isSubmitted
+        ? 'Submitted daily report updated'
+        : 'Daily report draft updated',
+      message: isSubmitted
+        ? `Submitted daily report for ${savedReport.reportDate} was updated and is ready to resubmit.`
+        : `Daily report draft for ${savedReport.reportDate} was updated.`,
       metadata: {
         reportId: savedReport.id,
         status: savedReport.status,
@@ -149,10 +152,7 @@ export class DailyReportsService {
     reportId: string,
   ): Promise<DailyReport> {
     const report = await this.getMyReport(salesRepId, reportId);
-
-    if (report.status === DailyReportStatus.SUBMITTED) {
-      return report;
-    }
+    const wasSubmitted = report.status === DailyReportStatus.SUBMITTED;
 
     report.status = DailyReportStatus.SUBMITTED;
     report.submittedAt = new Date();
@@ -160,9 +160,13 @@ export class DailyReportsService {
 
     await this.activityService.logForUser({
       userId: salesRepId,
-      type: 'DAILY_REPORT_SUBMITTED',
-      title: 'Daily Report Submitted',
-      message: `Daily report submitted for ${savedReport.reportDate}`,
+      type: wasSubmitted
+        ? 'DAILY_REPORT_RESUBMITTED'
+        : 'DAILY_REPORT_SUBMITTED',
+      title: wasSubmitted ? 'Daily Report Resubmitted' : 'Daily Report Submitted',
+      message: wasSubmitted
+        ? `Daily report resubmitted for ${savedReport.reportDate}`
+        : `Daily report submitted for ${savedReport.reportDate}`,
       metadata: {
         reportId: savedReport.id,
         reportDate: savedReport.reportDate,

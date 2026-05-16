@@ -318,7 +318,7 @@ export class DeliveryAssignmentsService {
       userId: tmUserId,
       type: 'WAREHOUSE_RETURN_PIN_GENERATED',
       title: 'Warehouse return PIN generated',
-      message: `Return PIN for this assignment is: ${rawPin}. Share this with your distributor to close the trip. Expires in 2 hours.`,
+      message: `Return PIN for this assignment is: ${rawPin}. Share this with your distributor after checking the route cash settlement and returned products. Expires in 2 hours.`,
       metadata: {
         assignmentId,
         pin: rawPin,
@@ -449,6 +449,7 @@ export class DeliveryAssignmentsService {
       (ret as any).returnType = 'SHOP';
       (ret as any).orderId = orderId;
       ret.tmVerified = false;
+      ret.estimatedValue = Number(totalValue.toFixed(2));
       ret.verificationNote = `Shop return, shop owner PIN verified. Order: ${dao.order?.orderCode ?? orderId}.`;
       const saved = await oRRepo.save(ret);
 
@@ -776,6 +777,47 @@ export class DeliveryAssignmentsService {
       );
     }
 
+    const completedOrderTotal = Number(
+      (assignment.assignmentOrders ?? [])
+        .reduce((sum, dao) => {
+          if (dao.order?.status !== 'COMPLETED') {
+            return sum;
+          }
+
+          return sum + (dao.order.totalAfterDiscount ?? dao.order.totalAmount);
+        }, 0)
+        .toFixed(2),
+    );
+    const recordedShopReturns = await this.returnsRepo.find({
+      where: {
+        assignmentId,
+        returnType: 'SHOP',
+      },
+    });
+    const shopReturnValue = Number(
+      recordedShopReturns
+        .reduce((sum, orderReturn) => sum + (orderReturn.estimatedValue ?? 0), 0)
+        .toFixed(2),
+    );
+    const expectedCashAmount = Number(
+      Math.max(0, completedOrderTotal - shopReturnValue).toFixed(2),
+    );
+    const cashReturnedAmount = Number(
+      Number(dto.cashReturnedAmount ?? 0).toFixed(2),
+    );
+    const cashVarianceAmount = Number(
+      (cashReturnedAmount - expectedCashAmount).toFixed(2),
+    );
+    const hasCashVariance = Math.abs(cashVarianceAmount) >= 0.01;
+    const cashVarianceType = dto.cashVarianceType?.trim() || null;
+    const cashVarianceReason = dto.cashVarianceReason?.trim() || null;
+
+    if (hasCashVariance && (!cashVarianceType || !cashVarianceReason)) {
+      throw new BadRequestException(
+        'Provide a mismatch type and reason when the returned cash does not match the expected route cash.',
+      );
+    }
+
     await this.returnsRepo.manager.transaction(async (manager) => {
       const orderReturnRepo = manager.getRepository(OrderReturn);
       const returnItemRepo = manager.getRepository(ReturnItem);
@@ -786,7 +828,8 @@ export class DeliveryAssignmentsService {
         assignmentId,
         distributorId,
         tmVerified: true,
-        verificationNote: 'Verified via PIN at end of trip.',
+        estimatedValue: null,
+        verificationNote: `Verified via PIN at end of trip. Expected cash: LKR ${expectedCashAmount.toFixed(2)}. Returned cash: LKR ${cashReturnedAmount.toFixed(2)}.`,
       });
       const savedReturn = await orderReturnRepo.save(orderReturn);
 
@@ -811,10 +854,20 @@ export class DeliveryAssignmentsService {
         status: 'COMPLETED',
         tmReturnPinHash: null,
         tmReturnPinExpiresAt: null,
+        expectedCashAmount,
+        cashReturnedAmount,
+        cashVarianceAmount,
+        cashVarianceType: hasCashVariance ? cashVarianceType : null,
+        cashVarianceReason: hasCashVariance ? cashVarianceReason : null,
+        settlementCompletedAt: new Date(),
       });
     });
 
-    return { message: 'Return submitted, stock restored, and trip closed.' };
+    return {
+      message: hasCashVariance
+        ? 'Return submitted, cash mismatch recorded with a reason, and trip closed.'
+        : 'Return submitted, cash reconciled, stock restored, and trip closed.',
+    };
   }
 
   async reportIncident(distributorId: string, dto: ReportIncidentDto) {
@@ -1052,6 +1105,12 @@ export class DeliveryAssignmentsService {
       deliveryDate: a.deliveryDate,
       status: a.status,
       notes: a.notes,
+      expectedCashAmount: a.expectedCashAmount ?? null,
+      cashReturnedAmount: a.cashReturnedAmount ?? null,
+      cashVarianceAmount: a.cashVarianceAmount ?? null,
+      cashVarianceType: a.cashVarianceType ?? null,
+      cashVarianceReason: a.cashVarianceReason ?? null,
+      settlementCompletedAt: a.settlementCompletedAt ?? null,
       orders: (a.assignmentOrders ?? [])
         .sort((x, y) => x.sortOrder - y.sortOrder)
         .map((dao) => ({
@@ -1065,7 +1124,12 @@ export class DeliveryAssignmentsService {
           shopLatitude: dao.order?.user?.latitude ?? null,
           shopLongitude: dao.order?.user?.longitude ?? null,
           totalAmount: dao.order?.totalAmount ?? null,
+          paymentMethod: dao.order?.paymentMethod ?? 'STANDARD',
           currencyCode: dao.order?.currencyCode ?? 'LKR',
+          appliedPromotionCode: dao.order?.appliedPromotionCode ?? null,
+          subtotalBeforeDiscount: dao.order?.subtotalBeforeDiscount ?? null,
+          promotionDiscountTotal: dao.order?.promotionDiscountTotal ?? null,
+          totalAfterDiscount: dao.order?.totalAfterDiscount ?? null,
           status: dao.order?.status ?? null,
           items: (dao.order?.items ?? []).map((item) => ({
             id: item.id,
@@ -1090,6 +1154,7 @@ export class DeliveryAssignmentsService {
         : null,
       tmVerified: r.tmVerified,
       verificationNote: r.verificationNote,
+      estimatedValue: r.estimatedValue ?? null,
       items: (r.items ?? []).map((item) => ({
         id: item.id,
         productId: item.productId,

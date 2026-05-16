@@ -48,6 +48,13 @@ export class OrderReturn {
   @Column({ name: 'verification_note', type: 'text', nullable: true })
   verificationNote: string | null;
 
+  @Column({
+    name: 'estimated_value',
+    type: 'double precision',
+    nullable: true,
+  })
+  estimatedValue: number | null;
+
   @OneToMany(() => ReturnItem, (item) => item.orderReturn, {
     cascade: true,
     eager: true,

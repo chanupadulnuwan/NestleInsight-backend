@@ -14,6 +14,25 @@ import { PromotionRedemption } from './entities/promotion-redemption.entity';
 import { PromotionTerritory } from './entities/promotion-territory.entity';
 import { Promotion } from './entities/promotion.entity';
 
+type PromotionValidationItem = {
+  productId: string;
+  quantity: number;
+};
+
+type PromotionEligibilityOptions = {
+  promotionId?: string | null;
+  code?: string | null;
+  territoryId: string;
+  shopId?: string | null;
+  cartTotal: number;
+  cartItems: PromotionValidationItem[];
+};
+
+type PromotionEligibilityResult = {
+  promotion: Promotion;
+  discountAmount: number;
+};
+
 @Injectable()
 export class PromotionsService {
   constructor(
@@ -35,12 +54,18 @@ export class PromotionsService {
     const { eligibleProductIds, eligibleTerritoryIds, code, ...promotionData } =
       createPromotionDto;
     const normalizedCode = this.normalizePromotionCode(code);
+    const { startDate, endDate } = this.normalizePromotionDateRange(
+      createPromotionDto.startDate,
+      createPromotionDto.endDate,
+    );
 
     await this.ensurePromotionCodeIsUnique(normalizedCode);
 
     const promotion = this.promotionRepository.create({
       ...promotionData,
       code: normalizedCode,
+      startDate,
+      endDate,
       createdBy,
     });
 
@@ -79,6 +104,9 @@ export class PromotionsService {
         'eligibleProducts.product',
         'eligibleTerritories',
       ],
+      order: {
+        createdAt: 'DESC',
+      },
     });
     return promotions.map((p) => this.mapPromotionRelations(p));
   }
@@ -89,20 +117,25 @@ export class PromotionsService {
       .leftJoinAndSelect('promotion.eligibleProducts', 'ep')
       .leftJoinAndSelect('ep.product', 'p_prod')
       .leftJoinAndSelect('promotion.eligibleTerritories', 'et')
-      .where('promotion.status = :status', { status: 'active' })
-      .andWhere('promotion.start_date <= :now', { now: new Date() })
-      .andWhere('promotion.end_date >= :now', { now: new Date() });
+      .orderBy('promotion.start_date', 'ASC')
+      .addOrderBy('promotion.created_at', 'DESC')
+      .distinct(true);
 
     if (territoryId) {
-      qb.innerJoin(
+      qb.leftJoin(
         PromotionTerritory,
-        'pt',
-        'pt.promotion_id = promotion.id',
-      ).andWhere('pt.territory_id = :territoryId', { territoryId });
+        'territory_scope',
+        'territory_scope.promotion_id = promotion.id',
+      ).andWhere(
+        '(territory_scope.territory_id = :territoryId OR territory_scope.id IS NULL)',
+        { territoryId },
+      );
     }
 
     const promotions = await qb.getMany();
-    return promotions.map((p) => this.mapPromotionRelations(p));
+    return promotions
+      .map((promotion) => this.mapPromotionRelations(promotion))
+      .filter((promotion) => promotion.status === 'active');
   }
 
   async findForTerritory(territoryId: string): Promise<Promotion[]> {
@@ -111,21 +144,19 @@ export class PromotionsService {
       .leftJoinAndSelect('promotion.eligibleProducts', 'ep')
       .leftJoinAndSelect('ep.product', 'p_prod')
       .leftJoinAndSelect('promotion.eligibleTerritories', 'et')
-      .innerJoin(
+      .leftJoin(
         PromotionTerritory,
-        'pt',
-        'pt.promotion_id = promotion.id AND pt.territory_id = :territoryId',
+        'territory_scope',
+        'territory_scope.promotion_id = promotion.id AND territory_scope.territory_id = :territoryId',
         { territoryId },
       )
+      .where('(territory_scope.id IS NOT NULL OR et.id IS NULL)')
       .orderBy('promotion.start_date', 'ASC')
-      .addOrderBy('promotion.created_at', 'DESC');
+      .addOrderBy('promotion.created_at', 'DESC')
+      .distinct(true);
 
     const promotions = await qb.getMany();
-    return promotions.map((promotion) => {
-      const mappedPromotion = this.mapPromotionRelations(promotion);
-      mappedPromotion.status = this.resolvePromotionStatus(mappedPromotion);
-      return mappedPromotion;
-    });
+    return promotions.map((promotion) => this.mapPromotionRelations(promotion));
   }
 
   async findOne(id: string): Promise<Promotion | null> {
@@ -158,6 +189,7 @@ export class PromotionsService {
           imageUrl: p.product?.imageUrl,
         }))
         .filter((p) => !!p.id) || [];
+    promotion.status = this.resolvePromotionStatus(promotion);
 
     return promotion;
   }
@@ -166,20 +198,23 @@ export class PromotionsService {
     const rawStatus = (promotion.status ?? '').trim().toLowerCase();
     const now = new Date();
 
-    if (rawStatus == 'disabled') {
+    if (rawStatus === 'disabled') {
       return 'disabled';
     }
 
-    if (rawStatus == 'expired' || now > promotion.endDate) {
-      return 'expired';
+    if (rawStatus === 'draft') {
+      return 'draft';
     }
 
-    if (rawStatus == 'scheduled' || now < promotion.startDate) {
+    const startDate = this.startOfDay(promotion.startDate);
+    const endDate = this.endOfDay(promotion.endDate);
+
+    if (now < startDate) {
       return 'scheduled';
     }
 
-    if (rawStatus == 'draft') {
-      return 'draft';
+    if (now > endDate) {
+      return 'expired';
     }
 
     return 'active';
@@ -206,9 +241,32 @@ export class PromotionsService {
       Object.keys(corePromotionData).length > 0 ||
       normalizedCode !== undefined
     ) {
+      const promotionUpdateData: Record<string, unknown> = {
+        ...corePromotionData,
+      };
+
+      if (updateDto.startDate !== undefined || updateDto.endDate !== undefined) {
+        const existingPromotion = await this.promotionRepository.findOne({
+          where: { id },
+          select: { id: true, startDate: true, endDate: true },
+        });
+
+        if (!existingPromotion) {
+          throw new BadRequestException('Promotion not found.');
+        }
+
+        const { startDate, endDate } = this.normalizePromotionDateRange(
+          updateDto.startDate ?? existingPromotion.startDate,
+          updateDto.endDate ?? existingPromotion.endDate,
+        );
+
+        promotionUpdateData.startDate = startDate;
+        promotionUpdateData.endDate = endDate;
+      }
+
       try {
         await this.promotionRepository.update(id, {
-          ...corePromotionData,
+          ...promotionUpdateData,
           ...(normalizedCode !== undefined ? { code: normalizedCode } : {}),
         });
       } catch (error) {
@@ -252,66 +310,18 @@ export class PromotionsService {
   }
 
   async validatePromotion(dto: ValidatePromotionDto) {
-    const promotion = await this.promotionRepository.findOne({
-      where: { code: dto.code, status: 'active' },
-      relations: ['eligibleProducts', 'eligibleTerritories'],
-    });
-
-    if (!promotion) {
-      throw new BadRequestException('Invalid or expired promotion code.');
-    }
-
-    const now = new Date();
-    if (now < promotion.startDate || now > promotion.endDate) {
-      throw new BadRequestException('This promotion is not currently active.');
-    }
-
-    if (
-      promotion.eligibleTerritories &&
-      promotion.eligibleTerritories.length > 0
-    ) {
-      const isEligible = promotion.eligibleTerritories.some(
-        (t) => t.territoryId === dto.territoryId,
-      );
-      if (!isEligible) {
-        throw new BadRequestException(
-          'Promotion not valid for your territory.',
-        );
-      }
-    }
-
-    if (
-      promotion.minOrderValue &&
-      dto.cartTotal < Number(promotion.minOrderValue)
-    ) {
-      throw new BadRequestException(
-        `Minimum order value of ${Number(promotion.minOrderValue).toLocaleString()} not met.`,
-      );
-    }
-
-    if (promotion.eligibleProducts && promotion.eligibleProducts.length > 0) {
-      const eligibleIds = promotion.eligibleProducts.map((p) => p.productId);
-      const hasEligibleItem = dto.cartItems.some((item) =>
-        eligibleIds.includes(item.productId),
-      );
-
-      if (!hasEligibleItem) {
-        throw new BadRequestException(
-          'Cart does not contain products eligible for this promotion.',
-        );
-      }
-    }
-
-    let discountAmount = 0;
-    if (promotion.discountType === 'percentage') {
-      discountAmount = (dto.cartTotal * Number(promotion.discountValue)) / 100;
-    } else {
-      discountAmount = Number(promotion.discountValue);
-    }
-
-    if (discountAmount > dto.cartTotal) {
-      discountAmount = dto.cartTotal;
-    }
+    const { promotion, discountAmount } =
+      await this.evaluatePromotionEligibility({
+        promotionId: dto.promotionId,
+        code: dto.code,
+        territoryId: dto.territoryId,
+        shopId: dto.shopId,
+        cartTotal: dto.cartTotal,
+        cartItems: dto.cartItems.map((item) => ({
+          productId: item.productId,
+          quantity: Number(item.quantity) || 0,
+        })),
+      });
 
     return {
       success: true,
@@ -335,112 +345,147 @@ export class PromotionsService {
     message: string;
     promotionId?: string;
   }> {
-    const promotion = await this.promotionRepository.findOne({
-      where: { code, status: 'active' },
-    });
+    try {
+      const { promotion, discountAmount } =
+        await this.evaluatePromotionEligibility({
+          code,
+          territoryId,
+          shopId,
+          cartTotal: orderTotal,
+          cartItems: productIds.map((productId) => ({
+            productId,
+            quantity: 1,
+          })),
+        });
+
+      return {
+        valid: true,
+        discount: discountAmount,
+        message: 'Promotion applied successfully!',
+        promotionId: promotion.id,
+      };
+    } catch (error) {
+      return {
+        valid: false,
+        discount: 0,
+        message:
+          error instanceof BadRequestException
+            ? this.readBadRequestMessage(error)
+            : 'Invalid or inactive promotion code.',
+      };
+    }
+  }
+
+  async evaluatePromotionEligibility(
+    options: PromotionEligibilityOptions,
+  ): Promise<PromotionEligibilityResult> {
+    const normalizedCode = this.normalizePromotionCode(options.code);
+
+    if (!options.promotionId && !normalizedCode) {
+      throw new BadRequestException(
+        'Select a promotion before applying it to the cart.',
+      );
+    }
+
+    const promotion = await this.findPromotionForEligibility(
+      options.promotionId,
+      normalizedCode,
+    );
+
     if (!promotion) {
-      return {
-        valid: false,
-        discount: 0,
-        message: 'Invalid or inactive promotion code.',
-      };
+      throw new BadRequestException('Invalid or expired promotion code.');
     }
 
-    const now = new Date();
-    if (now < promotion.startDate || now > promotion.endDate) {
-      return {
-        valid: false,
-        discount: 0,
-        message: 'Promotion is not currently valid.',
-      };
-    }
-
-    if (promotion.minOrderValue && orderTotal < promotion.minOrderValue) {
-      return {
-        valid: false,
-        discount: 0,
-        message: `Minimum order value not met (${promotion.minOrderValue}).`,
-      };
-    }
-
-    const territories = await this.promotionTerritoryRepository.find({
-      where: { promotionId: promotion.id },
-    });
-    if (territories.length > 0) {
-      const isEligibleTerritory = territories.some(
-        (territory) => territory.territoryId === territoryId,
+    if (
+      normalizedCode &&
+      this.normalizePromotionCode(promotion.code) !== normalizedCode
+    ) {
+      throw new BadRequestException(
+        'The selected promotion code no longer matches this promotion.',
       );
+    }
+
+    if (this.resolvePromotionStatus(promotion) !== 'active') {
+      throw new BadRequestException('This promotion is not currently active.');
+    }
+
+    if (
+      promotion.eligibleTerritories &&
+      promotion.eligibleTerritories.length > 0
+    ) {
+      const isEligibleTerritory = promotion.eligibleTerritories.some(
+        (territory) => territory.territoryId === options.territoryId,
+      );
+
       if (!isEligibleTerritory) {
-        return {
-          valid: false,
-          discount: 0,
-          message: 'Promotion not valid for this territory.',
-        };
-      }
-    }
-
-    const products = await this.promotionProductRepository.find({
-      where: { promotionId: promotion.id },
-    });
-    if (products.length > 0) {
-      const hasEligibleProduct = products.some((product) =>
-        productIds.includes(product.productId),
-      );
-      if (!hasEligibleProduct) {
-        return {
-          valid: false,
-          discount: 0,
-          message: 'Cart does not contain eligible products.',
-        };
-      }
-    }
-
-    if (promotion.usageLimit || promotion.perShopLimit) {
-      const redemptions = await this.promotionRedemptionRepository.find({
-        where: { promotionId: promotion.id },
-      });
-
-      if (promotion.usageLimit && redemptions.length >= promotion.usageLimit) {
-        return {
-          valid: false,
-          discount: 0,
-          message: 'Promotion global usage limit reached.',
-        };
-      }
-
-      if (promotion.perShopLimit) {
-        const shopRedemptions = redemptions.filter(
-          (redemption) => redemption.shopId === shopId,
+        throw new BadRequestException(
+          'Promotion not valid for your territory.',
         );
-        if (shopRedemptions.length >= promotion.perShopLimit) {
-          return {
-            valid: false,
-            discount: 0,
-            message: 'Shop usage limit reached for this promotion.',
-          };
-        }
       }
     }
 
-    let discount = 0;
-    if (promotion.discountType === 'percentage') {
-      discount = (orderTotal * promotion.discountValue) / 100;
-      if (discount > orderTotal) {
-        discount = orderTotal;
-      }
-    } else if (promotion.discountType === 'fixed') {
-      discount = Number(promotion.discountValue);
-      if (discount > orderTotal) {
-        discount = orderTotal;
-      }
+    if (
+      promotion.minOrderValue &&
+      options.cartTotal < Number(promotion.minOrderValue)
+    ) {
+      throw new BadRequestException(
+        `Minimum order value of ${Number(promotion.minOrderValue).toLocaleString()} not met.`,
+      );
     }
+
+    const eligibleProductIds = new Set(
+      promotion.eligibleProducts?.map((product) => product.productId) ?? [],
+    );
+    const applicableItems =
+      eligibleProductIds.size > 0
+        ? options.cartItems.filter((item) => eligibleProductIds.has(item.productId))
+        : options.cartItems;
+
+    if (eligibleProductIds.size > 0 && applicableItems.length === 0) {
+      throw new BadRequestException(
+        'Cart does not contain products eligible for this promotion.',
+      );
+    }
+
+    const applicableQuantity = applicableItems.reduce(
+      (sum, item) => sum + Math.max(0, Number(item.quantity) || 0),
+      0,
+    );
+
+    if (
+      promotion.minQuantity &&
+      applicableQuantity < Number(promotion.minQuantity)
+    ) {
+      throw new BadRequestException(
+        `Minimum quantity of ${Number(promotion.minQuantity)} item(s) not met.`,
+      );
+    }
+
+    await this.assertUsageLimitAvailability(promotion, options.shopId);
 
     return {
-      valid: true,
-      discount,
-      message: 'Promotion applied successfully!',
-      promotionId: promotion.id,
+      promotion,
+      discountAmount: this.calculateDiscountAmount(
+        promotion,
+        options.cartTotal,
+      ),
     };
+  }
+
+  async recordPromotionRedemption(
+    promotionId: string,
+    orderId: string,
+    shopId: string,
+    userId: string,
+    discountAmount: number,
+  ) {
+    await this.promotionRedemptionRepository.insert({
+      promotionId,
+      orderId,
+      shopId,
+      userId,
+      discountAmount: Number(discountAmount.toFixed(2)),
+    });
   }
 
   private normalizePromotionCode(code?: string | null): string | null {
@@ -450,6 +495,145 @@ export class PromotionsService {
 
     const normalizedCode = code.trim();
     return normalizedCode.length > 0 ? normalizedCode : null;
+  }
+
+  private normalizePromotionDateRange(startDate: Date, endDate: Date) {
+    const normalizedStartDate = this.startOfDay(startDate);
+    const normalizedEndDate = this.endOfDay(endDate);
+
+    if (normalizedEndDate < normalizedStartDate) {
+      throw new BadRequestException(
+        'Promotion end date must be on or after the start date.',
+      );
+    }
+
+    return {
+      startDate: normalizedStartDate,
+      endDate: normalizedEndDate,
+    };
+  }
+
+  private startOfDay(value: Date) {
+    return new Date(
+      value.getFullYear(),
+      value.getMonth(),
+      value.getDate(),
+      0,
+      0,
+      0,
+      0,
+    );
+  }
+
+  private endOfDay(value: Date) {
+    return new Date(
+      value.getFullYear(),
+      value.getMonth(),
+      value.getDate(),
+      23,
+      59,
+      59,
+      999,
+    );
+  }
+
+  private async findPromotionForEligibility(
+    promotionId?: string | null,
+    code?: string | null,
+  ) {
+    if (promotionId) {
+      return this.promotionRepository.findOne({
+        where: { id: promotionId },
+        relations: ['eligibleProducts', 'eligibleTerritories'],
+      });
+    }
+
+    if (!code) {
+      return null;
+    }
+
+    return this.promotionRepository.findOne({
+      where: { code },
+      relations: ['eligibleProducts', 'eligibleTerritories'],
+    });
+  }
+
+  private async assertUsageLimitAvailability(
+    promotion: Promotion,
+    shopId?: string | null,
+  ) {
+    if (!promotion.usageLimit && !promotion.perShopLimit) {
+      return;
+    }
+
+    const redemptions = await this.promotionRedemptionRepository.find({
+      where: { promotionId: promotion.id },
+    });
+
+    if (
+      promotion.usageLimit &&
+      redemptions.length >= Number(promotion.usageLimit)
+    ) {
+      throw new BadRequestException('Promotion global usage limit reached.');
+    }
+
+    if (promotion.perShopLimit) {
+      if (!shopId) {
+        throw new BadRequestException(
+          'This promotion requires a valid shop account.',
+        );
+      }
+
+      const shopRedemptions = redemptions.filter(
+        (redemption) => redemption.shopId === shopId,
+      );
+
+      if (shopRedemptions.length >= Number(promotion.perShopLimit)) {
+        throw new BadRequestException(
+          'Shop usage limit reached for this promotion.',
+        );
+      }
+    }
+  }
+
+  private calculateDiscountAmount(promotion: Promotion, cartTotal: number) {
+    let discountAmount = 0;
+
+    if (promotion.discountType === 'percentage') {
+      discountAmount = (cartTotal * Number(promotion.discountValue)) / 100;
+    } else {
+      discountAmount = Number(promotion.discountValue);
+    }
+
+    if (discountAmount > cartTotal) {
+      discountAmount = cartTotal;
+    }
+
+    return Number(discountAmount.toFixed(2));
+  }
+
+  private readBadRequestMessage(error: BadRequestException) {
+    const response = error.getResponse();
+
+    if (typeof response === 'string') {
+      return response;
+    }
+
+    if (
+      typeof response === 'object' &&
+      response !== null &&
+      'message' in response
+    ) {
+      const message = response.message;
+      if (typeof message === 'string') {
+        return message;
+      }
+      if (Array.isArray(message) && typeof message[0] === 'string') {
+        return message[0];
+      }
+    }
+
+    return error.message;
   }
 
   private async ensurePromotionCodeIsUnique(

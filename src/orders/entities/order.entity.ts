@@ -53,6 +53,14 @@ export class Order {
   source: string;
 
   @Column({
+    name: 'payment_method',
+    type: 'varchar',
+    length: 30,
+    default: 'STANDARD',
+  })
+  paymentMethod: string;
+
+  @Column({
     name: 'assisted_reason',
     type: 'varchar',
     length: 250,

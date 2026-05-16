@@ -62,25 +62,37 @@ export class ActivityController {
   @Roles(Role.TERRITORY_DISTRIBUTOR, Role.REGIONAL_MANAGER, Role.SALES_REP) // 👈 ADDED SALES_REP
   @Get('feedback/my-territory')
   getMyTerritoryOrderFeedback(@Req() req: any) {
-    const { territoryId } = req.user as { territoryId: string | null };
+    const { territoryId, warehouseId } = req.user as {
+      territoryId: string | null;
+      warehouseId?: string | null;
+    };
 
     if (!territoryId) {
       return [];
     }
 
-    return this.activityService.getFeedbackByTerritory(territoryId);
+    return this.activityService.getFeedbackByTerritory(
+      territoryId,
+      warehouseId ?? null,
+    );
   }
 
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.TERRITORY_DISTRIBUTOR, Role.REGIONAL_MANAGER, Role.SALES_REP) // 👈 ADDED SALES_REP
   @Get('text-feedback/my-territory')
   getMyTerritoryTextFeedback(@Req() req: any) {
-    const { territoryId } = req.user as { territoryId: string | null };
+    const { territoryId, warehouseId } = req.user as {
+      territoryId: string | null;
+      warehouseId?: string | null;
+    };
 
     if (!territoryId) {
       return [];
     }
 
-    return this.activityService.getTextFeedbackByTerritory(territoryId);
+    return this.activityService.getTextFeedbackByTerritory(
+      territoryId,
+      warehouseId ?? null,
+    );
   }
 }

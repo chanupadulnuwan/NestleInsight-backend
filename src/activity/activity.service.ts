@@ -87,14 +87,15 @@ export class ActivityService {
     // Notify the Territory Manager assigned to the same territory
     const shopOwner = await this.userRepository.findOne({
       where: { id: userId },
-      select: ['id', 'firstName', 'lastName', 'territoryId'],
+      select: ['id', 'firstName', 'lastName', 'territoryId', 'warehouseId'],
     });
 
     if (shopOwner?.territoryId) {
       const territoryManager = await this.userRepository.findOne({
         where: {
-          role: Role.TERRITORY_DISTRIBUTOR,
+          role: Role.REGIONAL_MANAGER,
           territoryId: shopOwner.territoryId,
+          ...(shopOwner.warehouseId ? { warehouseId: shopOwner.warehouseId } : {}),
         },
         select: ['id'],
       });
@@ -182,8 +183,19 @@ export class ActivityService {
       : '';
 
     // 6. Notify the Territory Distributor who owns this territory.
+    const shopOwnerWarehouseId = (
+      await this.userRepository.findOne({
+        where: { id: shopOwnerId },
+        select: ['warehouseId'],
+      })
+    )?.warehouseId;
+
     const tm = await this.userRepository.findOne({
-      where: { role: Role.TERRITORY_DISTRIBUTOR, territoryId },
+      where: {
+        role: Role.REGIONAL_MANAGER,
+        territoryId,
+        ...(shopOwnerWarehouseId ? { warehouseId: shopOwnerWarehouseId } : {}),
+      },
       select: ['id'],
     });
 
@@ -208,16 +220,29 @@ export class ActivityService {
     return { message: 'Feedback submitted successfully.', feedback: saved };
   }
 
-  async getFeedbackByTerritory(territoryId: string): Promise<OrderFeedback[]> {
-    return this.orderFeedbackRepository.find({
-      where: { territoryId },
-      relations: ['shopOwner', 'order'],
-      order: { createdAt: 'DESC' },
-    });
+  async getFeedbackByTerritory(
+    territoryId: string,
+    warehouseId?: string | null,
+  ): Promise<OrderFeedback[]> {
+    const query = this.orderFeedbackRepository
+      .createQueryBuilder('feedback')
+      .leftJoinAndSelect('feedback.shopOwner', 'shopOwner')
+      .leftJoinAndSelect('feedback.order', 'order')
+      .where('feedback.territory_id = :territoryId', { territoryId })
+      .orderBy('feedback.created_at', 'DESC');
+
+    if (warehouseId) {
+      query.andWhere('shopOwner.warehouse_id = :warehouseId', { warehouseId });
+    }
+
+    return query.getMany();
   }
 
-  async getTextFeedbackByTerritory(territoryId: string): Promise<any[]> {
-    return this.feedbackRepository
+  async getTextFeedbackByTerritory(
+    territoryId: string,
+    warehouseId?: string | null,
+  ): Promise<any[]> {
+    const query = this.feedbackRepository
       .createQueryBuilder('fb')
       .select([
         'fb.id AS "id"',
@@ -231,7 +256,12 @@ export class ActivityService {
       ])
       .innerJoin(User, 'u', 'u.id = fb.userId')
       .where('u.territoryId = :territoryId', { territoryId })
-      .orderBy('fb.createdAt', 'DESC')
-      .getRawMany();
+      .orderBy('fb.createdAt', 'DESC');
+
+    if (warehouseId) {
+      query.andWhere('u.warehouse_id = :warehouseId', { warehouseId });
+    }
+
+    return query.getRawMany();
   }
 }
