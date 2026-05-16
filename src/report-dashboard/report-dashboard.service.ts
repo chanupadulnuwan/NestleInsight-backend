@@ -46,14 +46,15 @@ export class ReportDashboardService {
       .leftJoinAndSelect('report.salesRep', 'salesRep')
       .leftJoin('report.route', 'route')
       .leftJoin('route.territory', 'territory')
-      .addSelect(['territory.id', 'territory.name'])
-      .where('report.status = :status', { status: DailyReportStatus.SUBMITTED });
+      .addSelect(['territory.id', 'territory.name']);
 
     if (actionedReportIds.length > 0) {
       query.andWhere('report.id NOT IN (:...ids)', { ids: actionedReportIds });
     }
 
-    const reports = await query.orderBy('report.submittedAt', 'DESC').getMany();
+    const reports = await query
+      .orderBy('COALESCE(report.submittedAt, report.updatedAt)', 'DESC')
+      .getMany();
 
     const reviewMap = await this.getReviewMapForReports(reports.map((r) => r.id));
 
@@ -83,11 +84,10 @@ export class ReportDashboardService {
       .leftJoin('route.territory', 'territory')
       .addSelect(['territory.id', 'territory.name'])
       .where('report.id = :id', { id: reportId })
-      .andWhere('report.status = :status', { status: DailyReportStatus.SUBMITTED })
       .getOne();
 
     if (!report) {
-      throw new NotFoundException('Report not found or not yet submitted.');
+      throw new NotFoundException('Report not found.');
     }
 
     const review = await this.reviewRepo.findOne({ where: { dailyReportId: reportId } });
@@ -343,6 +343,7 @@ export class ReportDashboardService {
 
     return {
       id: report.id,
+      status: report.status,
       reportDate: report.reportDate,
       submittedAt: report.submittedAt,
       repComments: report.repComments,

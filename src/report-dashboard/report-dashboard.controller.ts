@@ -26,7 +26,7 @@ import { ReportDashboardService } from './report-dashboard.service';
 
 @Controller('report-dashboard')
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(Role.ADMIN, Role.DEMAND_PLANNER)
+@Roles(Role.DEMAND_PLANNER)
 export class ReportDashboardController {
   constructor(private readonly service: ReportDashboardService) {}
 
