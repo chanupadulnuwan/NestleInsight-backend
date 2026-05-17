@@ -140,7 +140,7 @@ export class WarehousesService {
         order: {
           placedAt: 'DESC',
         },
-        take: 25,
+        take: 200,
       }),
     ]);
 
@@ -586,6 +586,14 @@ export class WarehousesService {
           totalCases: order.items.reduce((sum, item) => sum + item.quantity, 0),
           placedAt: order.placedAt,
         })),
+        productOrderTotals: orders.reduce<Record<string, number>>((map, order) => {
+          for (const item of order.items) {
+            if (item.productId) {
+              map[item.productId] = (map[item.productId] ?? 0) + item.quantity;
+            }
+          }
+          return map;
+        }, {}),
       },
     };
   }
