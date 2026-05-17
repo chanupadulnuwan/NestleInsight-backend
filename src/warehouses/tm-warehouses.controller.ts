@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -28,6 +29,19 @@ export class TmWarehousesController {
   @Get()
   getMyWarehouse(@Req() req: any) {
     return this.tmWarehousesService.getMyWarehouse(req.user.userId);
+  }
+
+  @Get('analytics')
+  getAnalytics(
+    @Req() req: any,
+    @Query('productId') productId?: string,
+    @Query('days') days?: string,
+  ) {
+    return this.tmWarehousesService.getAnalytics(
+      req.user.userId,
+      productId,
+      days ? Math.min(Math.max(parseInt(days, 10) || 30, 7), 365) : 30,
+    );
   }
 
   @Get('users/:userId')

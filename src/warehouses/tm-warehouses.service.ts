@@ -13,10 +13,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { MoreThanOrEqual, Repository } from 'typeorm';
 
 import { ProductStatus } from '../common/enums/product-status.enum';
 import { Role } from '../common/enums/role.enum';
+import { Order } from '../orders/entities/order.entity';
+import { buildWarehouseAnalytics } from './warehouse-analytics.util';
 import { Product } from '../products/entities/product.entity';
 import { User } from '../users/entities/user.entity';
 import { Vehicle } from '../vehicles/entities/vehicle.entity';
@@ -81,6 +83,8 @@ export class TmWarehousesService {
     private readonly vehiclesRepo: Repository<Vehicle>,
     @InjectRepository(Product)
     private readonly productsRepo: Repository<Product>,
+    @InjectRepository(Order)
+    private readonly ordersRepo: Repository<Order>,
   ) {}
 
   async getMyWarehouse(tmUserId: string) {
@@ -372,6 +376,36 @@ export class TmWarehousesService {
     return { message: 'Vehicle assigned to your warehouse.' };
   }
 
+  async getAnalytics(tmUserId: string, productId?: string, days = 30) {
+    const tm = await this.requireTm(tmUserId);
+
+    const warehouse = await this.warehousesRepo.findOne({
+      where: { id: tm.warehouseId! },
+      relations: { inventoryItems: { product: true } },
+    });
+
+    if (!warehouse) throw new NotFoundException('Your warehouse was not found.');
+
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+
+    const orders = await this.ordersRepo.find({
+      where: { warehouseId: warehouse.id, placedAt: MoreThanOrEqual(startDate) },
+      order: { placedAt: 'ASC' },
+    });
+
+    return {
+      message: 'Analytics fetched.',
+      analytics: buildWarehouseAnalytics(
+        warehouse.inventoryItems ?? [],
+        orders,
+        productId,
+        days,
+        startDate,
+      ),
+    };
+  }
+
   private async requireTm(tmUserId: string) {
     const tm = await this.usersRepo.findOne({ where: { id: tmUserId } });
     if (!tm?.warehouseId) {
@@ -404,3 +438,4 @@ export class TmWarehousesService {
     return candidate;
   }
 }
+

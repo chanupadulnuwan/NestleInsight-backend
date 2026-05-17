@@ -6,6 +6,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { ILike, In, IsNull, MoreThanOrEqual, Repository } from 'typeorm';
 
+import { buildWarehouseAnalytics } from './warehouse-analytics.util';
 import { AccountStatus } from '../common/enums/account-status.enum';
 import { ApprovalStatus } from '../common/enums/approval-status.enum';
 import { ProductStatus } from '../common/enums/product-status.enum';
@@ -348,6 +349,38 @@ export class WarehousesService {
     await this.inventoryRepository.save(updatedItems);
 
     return this.getWarehouseDetails(warehouseId, 'MONTHLY');
+  }
+
+  async getWarehouseAnalytics(
+    warehouseId: string,
+    productId?: string,
+    days = 30,
+  ) {
+    const warehouse = await this.warehousesRepository.findOne({
+      where: { id: warehouseId },
+      relations: { inventoryItems: { product: true } },
+    });
+
+    if (!warehouse) throw new NotFoundException('Warehouse not found.');
+
+    const startDate = new Date();
+    startDate.setDate(startDate.getDate() - days);
+
+    const orders = await this.ordersRepository.find({
+      where: { warehouseId: warehouse.id, placedAt: MoreThanOrEqual(startDate) },
+      order: { placedAt: 'ASC' },
+    });
+
+    return {
+      message: 'Analytics fetched successfully.',
+      analytics: buildWarehouseAnalytics(
+        warehouse.inventoryItems ?? [],
+        orders,
+        productId,
+        days,
+        startDate,
+      ),
+    };
   }
 
   async lookupWarehouseByName(name: string) {

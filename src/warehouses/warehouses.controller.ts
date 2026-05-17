@@ -6,6 +6,7 @@ import {
   Patch,
   Post,
   Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 
@@ -45,6 +46,21 @@ export class WarehousesController {
     @Query('orderWindow') orderWindow?: string,
   ) {
     return this.warehousesService.getWarehouseDetails(warehouseId, orderWindow);
+  }
+
+  @Get(':id/analytics')
+  @UseGuards(JwtAuthGuard, RolesGuard, PortalApprovalGuard)
+  @Roles(Role.ADMIN, Role.REGIONAL_MANAGER)
+  getWarehouseAnalytics(
+    @Param('id') warehouseId: string,
+    @Query('productId') productId?: string,
+    @Query('days') days?: string,
+  ) {
+    return this.warehousesService.getWarehouseAnalytics(
+      warehouseId,
+      productId,
+      days ? Math.min(Math.max(parseInt(days, 10) || 30, 7), 365) : 30,
+    );
   }
 
   @Post()
