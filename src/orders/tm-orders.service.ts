@@ -69,13 +69,17 @@ export class TmOrdersService {
         shopName: order.shopNameSnapshot,
         userId: order.userId,
         status: order.status,
-        totalAmount: order.totalAmount,
+        totalAmount: this.readAmount(order.totalAmount),
         paymentMethod: order.paymentMethod,
         currencyCode: order.currencyCode,
         appliedPromotionCode: order.appliedPromotionCode,
-        subtotalBeforeDiscount: order.subtotalBeforeDiscount,
-        promotionDiscountTotal: order.promotionDiscountTotal,
-        totalAfterDiscount: order.totalAfterDiscount,
+        subtotalBeforeDiscount: this.readNullableAmount(
+          order.subtotalBeforeDiscount,
+        ),
+        promotionDiscountTotal: this.readNullableAmount(
+          order.promotionDiscountTotal,
+        ),
+        totalAfterDiscount: this.readNullableAmount(order.totalAfterDiscount),
         placedAt: order.placedAt,
         approvedAt: order.approvedAt,
         customerNote: order.customerNote,
@@ -408,14 +412,18 @@ export class TmOrdersService {
       availableItems,
       unavailableItems,
       currentTotal: Number(
-        (order.subtotalBeforeDiscount ?? order.totalAmount).toFixed(2),
+        this.readAmount(order.subtotalBeforeDiscount ?? order.totalAmount).toFixed(
+          2,
+        ),
       ),
       discountedTotal: Number(
-        (order.totalAfterDiscount ?? order.totalAmount).toFixed(2),
+        this.readAmount(order.totalAfterDiscount ?? order.totalAmount).toFixed(
+          2,
+        ),
       ),
       availableTotal: Number(
         availableItems
-          .reduce((sum, item) => sum + item.lineTotal, 0)
+          .reduce((sum, item) => sum + this.readAmount(item.lineTotal), 0)
           .toFixed(2),
       ),
     };
@@ -449,6 +457,20 @@ export class TmOrdersService {
 
   private formatCurrency(value: number) {
     return `LKR ${value.toFixed(2)}`;
+  }
+
+  private readAmount(value: unknown) {
+    const numericValue =
+      typeof value === 'number' ? value : Number.parseFloat(`${value ?? 0}`);
+    return Number.isFinite(numericValue) ? numericValue : 0;
+  }
+
+  private readNullableAmount(value: unknown) {
+    if (value === null || value === undefined) {
+      return null;
+    }
+
+    return this.readAmount(value);
   }
 
   private formatDateTime(date: Date) {

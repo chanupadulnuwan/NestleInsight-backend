@@ -4,10 +4,19 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 
+import { ApprovalStatus } from '../common/enums/approval-status.enum';
 import { Role } from '../common/enums/role.enum';
 import { Order } from '../orders/entities/order.entity';
+import {
+  RouteApprovalRequest,
+  RouteApprovalRequestStatus,
+} from '../sales-routes/entities/route-approval-request.entity';
+import {
+  VanLoadRequest,
+  VanLoadRequestStatus,
+} from '../sales-routes/entities/van-load-request.entity';
 import { User } from '../users/entities/user.entity';
 import { SubmitOrderFeedbackDto } from './dto/submit-order-feedback.dto';
 import { ActivityLog } from './entities/activity.entity';
@@ -33,6 +42,10 @@ export class ActivityService {
     private readonly orderFeedbackRepository: Repository<OrderFeedback>,
     @InjectRepository(Order)
     private readonly orderRepository: Repository<Order>,
+    @InjectRepository(RouteApprovalRequest)
+    private readonly routeApprovalRepository: Repository<RouteApprovalRequest>,
+    @InjectRepository(VanLoadRequest)
+    private readonly vanLoadRequestRepository: Repository<VanLoadRequest>,
     @InjectRepository(User)
     private readonly userRepository: Repository<User>,
   ) {}
@@ -55,11 +68,114 @@ export class ActivityService {
       order: { createdAt: 'DESC' },
       take: 100,
     });
+    const visibleActivities = await this.filterStalePendingActivities(activities);
 
     return {
       message: 'activity fetched successfully',
-      activities,
+      activities: visibleActivities,
     };
+  }
+
+  private async filterStalePendingActivities(activities: ActivityLog[]) {
+    const pendingRouteApprovalIds = new Set<string>();
+    const pendingLoadRequestIds = new Set<string>();
+    const pendingUserIds = new Set<string>();
+
+    for (const activity of activities) {
+      if (activity.type === 'ROUTE_DELIVERY_APPROVAL_PENDING') {
+        const approvalRequestId =
+          activity.metadata?.approvalRequestId?.toString?.() ?? '';
+        if (approvalRequestId) {
+          pendingRouteApprovalIds.add(approvalRequestId);
+        }
+      }
+
+      if (activity.type === 'ROUTE_LOAD_REQUEST_PENDING') {
+        const loadRequestId = activity.metadata?.loadRequestId?.toString?.() ?? '';
+        if (loadRequestId) {
+          pendingLoadRequestIds.add(loadRequestId);
+        }
+      }
+
+      if (
+        activity.type === 'WAREHOUSE_APPROVAL_PENDING' ||
+        activity.type === 'SALES_REP_APPROVAL_PENDING'
+      ) {
+        const pendingUserId = activity.metadata?.pendingUserId?.toString?.() ?? '';
+        if (pendingUserId) {
+          pendingUserIds.add(pendingUserId);
+        }
+      }
+    }
+
+    const [routeApprovals, loadRequests, pendingUsers] = await Promise.all([
+      pendingRouteApprovalIds.size > 0
+        ? this.routeApprovalRepository.find({
+            where: { id: In([...pendingRouteApprovalIds]) },
+            select: ['id', 'status'],
+          })
+        : Promise.resolve([]),
+      pendingLoadRequestIds.size > 0
+        ? this.vanLoadRequestRepository.find({
+            where: { id: In([...pendingLoadRequestIds]) },
+            select: ['id', 'status'],
+          })
+        : Promise.resolve([]),
+      pendingUserIds.size > 0
+        ? this.userRepository.find({
+            where: { id: In([...pendingUserIds]) },
+            select: ['id', 'approvalStatus'],
+          })
+        : Promise.resolve([]),
+    ]);
+
+    const routeApprovalStatusById = new Map(
+      routeApprovals.map((request) => [request.id, request.status]),
+    );
+    const loadRequestStatusById = new Map(
+      loadRequests.map((request) => [request.id, request.status]),
+    );
+    const userApprovalStatusById = new Map(
+      pendingUsers.map((user) => [user.id, user.approvalStatus]),
+    );
+
+    return activities.filter((activity) => {
+      if (activity.type === 'ROUTE_DELIVERY_APPROVAL_PENDING') {
+        const approvalRequestId =
+          activity.metadata?.approvalRequestId?.toString?.() ?? '';
+        if (!approvalRequestId) {
+          return true;
+        }
+
+        return (
+          routeApprovalStatusById.get(approvalRequestId) ===
+          RouteApprovalRequestStatus.PENDING
+        );
+      }
+
+      if (activity.type === 'ROUTE_LOAD_REQUEST_PENDING') {
+        const loadRequestId = activity.metadata?.loadRequestId?.toString?.() ?? '';
+        if (!loadRequestId) {
+          return true;
+        }
+
+        return loadRequestStatusById.get(loadRequestId) === VanLoadRequestStatus.PENDING;
+      }
+
+      if (
+        activity.type === 'WAREHOUSE_APPROVAL_PENDING' ||
+        activity.type === 'SALES_REP_APPROVAL_PENDING'
+      ) {
+        const pendingUserId = activity.metadata?.pendingUserId?.toString?.() ?? '';
+        if (!pendingUserId) {
+          return true;
+        }
+
+        return userApprovalStatusById.get(pendingUserId) === ApprovalStatus.PENDING;
+      }
+
+      return true;
+    });
   }
 
   async submitFeedbackForUser(userId: string, message: string) {

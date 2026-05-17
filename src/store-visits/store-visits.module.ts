@@ -7,8 +7,10 @@ import { OrdersModule } from '../orders/orders.module';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { OrderReturn } from '../delivery-assignments/entities/order-return.entity';
+import { Outlet } from '../outlets/entities/outlet.entity';
 import { SalesRoute } from '../sales-routes/entities/sales-route.entity';
 import { RouteBeatPlanItem } from '../sales-routes/entities/route-beat-plan-item.entity';
+import { User } from '../users/entities/user.entity';
 import { StoreVisit } from './entities/store-visit.entity';
 import { StoreVisitsController } from './store-visits.controller';
 import { StoreVisitsService } from './store-visits.service';
@@ -21,6 +23,8 @@ import { StoreVisitsService } from './store-visits.service';
       StoreVisit,
       SalesRoute,
       RouteBeatPlanItem,
+      Outlet,
+      User,
     ]),
     ActivityModule,
     OrdersModule,

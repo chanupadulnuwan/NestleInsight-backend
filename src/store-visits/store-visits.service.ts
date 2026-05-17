@@ -7,8 +7,12 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Like, MoreThan, Repository } from 'typeorm';
 
 import { ActivityService } from '../activity/activity.service';
+import { AccountStatus } from '../common/enums/account-status.enum';
+import { ApprovalStatus } from '../common/enums/approval-status.enum';
+import { Role } from '../common/enums/role.enum';
 import { ActivityLog } from '../activity/entities/activity.entity';
 import { OrderReturn } from '../delivery-assignments/entities/order-return.entity';
+import { Outlet } from '../outlets/entities/outlet.entity';
 import { StoreVisit, StoreVisitStatus } from './entities/store-visit.entity';
 import { Order } from '../orders/entities/order.entity';
 import {
@@ -16,6 +20,7 @@ import {
   SalesRouteStatus,
 } from '../sales-routes/entities/sales-route.entity';
 import { RouteBeatPlanItem } from '../sales-routes/entities/route-beat-plan-item.entity';
+import { User } from '../users/entities/user.entity';
 import { StartVisitDto } from './dto/start-visit.dto';
 import { CompleteVisitDto } from './dto/complete-visit.dto';
 import { CheckInVisitDto } from './dto/check-in-visit.dto';
@@ -35,6 +40,10 @@ export class StoreVisitsService {
     private readonly salesRoutesRepo: Repository<SalesRoute>,
     @InjectRepository(RouteBeatPlanItem)
     private readonly beatPlanItemsRepo: Repository<RouteBeatPlanItem>,
+    @InjectRepository(Outlet)
+    private readonly outletsRepo: Repository<Outlet>,
+    @InjectRepository(User)
+    private readonly usersRepo: Repository<User>,
     private readonly activityService: ActivityService,
   ) {}
 
@@ -377,6 +386,10 @@ export class StoreVisitsService {
           productId: item.productId,
           productName: item.productNameSnapshot,
           quantity: item.quantity,
+          productsPerCase: item.product?.productsPerCase ?? 1,
+          quantityUnits:
+            this.readNumber(item.quantity) *
+            (item.product?.productsPerCase ?? 1),
         })),
       })),
       productQuantities,
@@ -569,9 +582,19 @@ export class StoreVisitsService {
   }
 
   private async findOrdersForOutlet(outletId: string): Promise<Order[]> {
+    const directUserIds = new Set<string>([outletId]);
+    const outlet = await this.outletsRepo.findOne({ where: { id: outletId } });
+    const linkedShopOwner = outlet
+      ? await this.findLinkedShopOwner(outlet)
+      : null;
+
+    if (linkedShopOwner) {
+      directUserIds.add(linkedShopOwner.id);
+    }
+
     const [directOrders, assistedOrders] = await Promise.all([
       this.ordersRepo.find({
-        where: { userId: outletId },
+        where: Array.from(directUserIds).map((userId) => ({ userId })),
         relations: ['items', 'items.product'],
         order: { placedAt: 'DESC' },
       }),
@@ -592,5 +615,73 @@ export class StoreVisitsService {
       const rightTime = right.placedAt ? new Date(right.placedAt).getTime() : 0;
       return rightTime - leftTime;
     });
+  }
+
+  private async findLinkedShopOwner(outlet: Outlet): Promise<User | null> {
+    const matchesScope = (user: User) =>
+      (!outlet.territoryId || user.territoryId === outlet.territoryId) &&
+      (!outlet.warehouseId || user.warehouseId === outlet.warehouseId);
+
+    const ownerEmail = outlet.ownerEmail?.trim();
+    if (ownerEmail) {
+      const match = await this.usersRepo.findOne({
+        where: {
+          email: ownerEmail,
+          role: Role.SHOP_OWNER,
+          accountStatus: AccountStatus.ACTIVE,
+          approvalStatus: ApprovalStatus.APPROVED,
+        },
+      });
+      if (match && matchesScope(match)) {
+        return match;
+      }
+    }
+
+    const ownerPhone = outlet.ownerPhone?.trim();
+    if (ownerPhone) {
+      const match = await this.usersRepo.findOne({
+        where: {
+          phoneNumber: ownerPhone,
+          role: Role.SHOP_OWNER,
+          accountStatus: AccountStatus.ACTIVE,
+          approvalStatus: ApprovalStatus.APPROVED,
+        },
+      });
+      if (match && matchesScope(match)) {
+        return match;
+      }
+    }
+
+    const shopOwners = await this.usersRepo.find({
+      where: {
+        role: Role.SHOP_OWNER,
+        accountStatus: AccountStatus.ACTIVE,
+        approvalStatus: ApprovalStatus.APPROVED,
+      },
+    });
+    const outletName = this.normalizeText(outlet.outletName);
+    const ownerName = this.normalizeText(outlet.ownerName);
+
+    return (
+      shopOwners.find((user) => {
+        if (!matchesScope(user)) {
+          return false;
+        }
+
+        const shopName = this.normalizeText(user.shopName);
+        if (outletName && outletName === shopName) {
+          return true;
+        }
+
+        const fullName = this.normalizeText(
+          `${user.firstName ?? ''} ${user.lastName ?? ''}`,
+        );
+        return !!ownerName && ownerName === fullName;
+      }) ?? null
+    );
+  }
+
+  private normalizeText(value?: string | null) {
+    return value?.trim().toLowerCase() ?? '';
   }
 }

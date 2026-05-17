@@ -1014,7 +1014,7 @@ export class DeliveryAssignmentsService {
     >();
 
     for (const item of returnItems) {
-      if (!item.productId) {
+      if (!item.productId || !this.shouldRestockWarehouseReturn(item.reason)) {
         continue;
       }
 
@@ -1067,6 +1067,18 @@ export class DeliveryAssignmentsService {
     }
 
     await inventoryRepo.save(updates);
+  }
+
+  private shouldRestockWarehouseReturn(reason: string) {
+    const normalizedReason = reason.trim().toUpperCase();
+    if (!normalizedReason) {
+      return false;
+    }
+
+    return !normalizedReason.includes('DAMAGED') &&
+      !normalizedReason.includes('EXPIRED')
+      ? true
+      : false;
   }
 
   private buildDeliveryStartedNote(
