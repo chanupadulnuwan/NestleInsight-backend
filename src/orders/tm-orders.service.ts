@@ -92,8 +92,8 @@ export class TmOrdersService {
           id: item.id,
           productId: item.productId,
           productName: item.productNameSnapshot,
-          quantity: item.quantity,
-          lineTotal: item.lineTotal,
+          quantity: this.readWholeNumber(item.quantity),
+          lineTotal: this.readAmount(item.lineTotal),
         })),
       })),
     };
@@ -342,14 +342,26 @@ export class TmOrdersService {
     orderId: string,
     warehouseId: string,
   ): Promise<Order> {
-    const order = await this.ordersRepo.findOne({ where: { id: orderId } });
+    const order = await this.ordersRepo
+      .createQueryBuilder('order')
+      .where('order.id = :orderId', { orderId })
+      .getOne();
     if (!order) throw new NotFoundException('Order not found.');
     if (order.warehouseId !== warehouseId) {
       throw new BadRequestException(
         'This order does not belong to your warehouse.',
       );
     }
-    return order;
+
+    const items = await this.orderItemsRepo
+      .createQueryBuilder('item')
+      .where('item.orderId = :orderId', { orderId })
+      .orderBy('item.id', 'ASC')
+      .getMany();
+
+    return Object.assign(order, {
+      items: Array.isArray(items) ? items : [],
+    });
   }
 
   private ensureProcessableOrder(order: Order) {
@@ -364,9 +376,10 @@ export class TmOrdersService {
     order: Order,
     warehouseId: string,
   ): Promise<ProcessingPreview> {
+    const orderItems = Array.isArray(order.items) ? order.items : [];
     const productIds = [
       ...new Set(
-        order.items
+        orderItems
           .map((item) => item.productId)
           .filter((productId): productId is string => !!productId),
       ),
@@ -381,19 +394,20 @@ export class TmOrdersService {
       inventoryItems.map((item) => [item.productId, item]),
     );
 
-    const lineChecks = order.items.map<ProcessingPreviewItem>((item) => {
+    const lineChecks = orderItems.map<ProcessingPreviewItem>((item) => {
       const inventoryItem = item.productId
         ? inventoryByProductId.get(item.productId)
         : null;
-      const availableCases = inventoryItem?.quantityOnHand ?? 0;
-      const isAvailable = !!item.productId && availableCases >= item.quantity;
+      const quantity = this.readWholeNumber(item.quantity);
+      const availableCases = this.readWholeNumber(inventoryItem?.quantityOnHand);
+      const isAvailable = !!item.productId && availableCases >= quantity;
 
       return {
         itemId: item.id,
         productId: item.productId,
-        productName: item.productNameSnapshot,
-        quantity: item.quantity,
-        lineTotal: item.lineTotal,
+        productName: item.productNameSnapshot?.trim() || 'Product',
+        quantity,
+        lineTotal: this.readAmount(item.lineTotal),
         availableCases,
         isAvailable,
         reason: isAvailable
@@ -430,6 +444,8 @@ export class TmOrdersService {
   }
 
   private serializePreview(order: Order, preview: ProcessingPreview) {
+    const deliveryDueAt = this.readDueAtIso(order.placedAt);
+
     return {
       orderId: order.id,
       orderCode: order.orderCode,
@@ -438,9 +454,19 @@ export class TmOrdersService {
       discountedTotal: preview.discountedTotal,
       availableTotal: preview.availableTotal,
       allItemsAvailable: preview.allItemsAvailable,
-      availableItems: preview.availableItems,
-      unavailableItems: preview.unavailableItems,
-      deliveryDueAt: getOrderDueAt(order.placedAt).toISOString(),
+      availableItems: preview.availableItems.map((item) => ({
+        ...item,
+        quantity: this.readWholeNumber(item.quantity),
+        lineTotal: this.readAmount(item.lineTotal),
+        availableCases: this.readWholeNumber(item.availableCases),
+      })),
+      unavailableItems: preview.unavailableItems.map((item) => ({
+        ...item,
+        quantity: this.readWholeNumber(item.quantity),
+        lineTotal: this.readAmount(item.lineTotal),
+        availableCases: this.readWholeNumber(item.availableCases),
+      })),
+      deliveryDueAt,
     };
   }
 
@@ -471,6 +497,20 @@ export class TmOrdersService {
     }
 
     return this.readAmount(value);
+  }
+
+  private readWholeNumber(value: unknown) {
+    const numericValue = Math.trunc(this.readAmount(value));
+    return Number.isFinite(numericValue) ? numericValue : 0;
+  }
+
+  private readDueAtIso(value: Date | string | null | undefined) {
+    const placedAt = value instanceof Date ? value : new Date(value ?? Date.now());
+    const normalizedPlacedAt = Number.isNaN(placedAt.getTime())
+      ? new Date()
+      : placedAt;
+
+    return getOrderDueAt(normalizedPlacedAt).toISOString();
   }
 
   private formatDateTime(date: Date) {
