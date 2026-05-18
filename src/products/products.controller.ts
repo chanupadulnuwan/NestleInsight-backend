@@ -32,7 +32,12 @@ export class ProductsController {
   constructor(private readonly productsService: ProductsService) {}
 
   @Get('catalog')
-  @Roles(Role.ADMIN, Role.SHOP_OWNER, Role.SALES_REP)
+  @Roles(
+    Role.ADMIN,
+    Role.SHOP_OWNER,
+    Role.SALES_REP,
+    Role.TERRITORY_DISTRIBUTOR,
+  )
   listActiveProductCatalog() {
     return this.productsService.listActiveProductCatalog();
   }
