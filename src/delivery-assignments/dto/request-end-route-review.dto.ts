@@ -9,13 +9,5 @@ export class RequestEndRouteReviewDto {
 
   @IsOptional()
   @IsString()
-  cashVarianceType?: string;
-
-  @IsOptional()
-  @IsString()
-  cashVarianceReason?: string;
-
-  @IsOptional()
-  @IsString()
   earlyClosureReason?: string;
 }

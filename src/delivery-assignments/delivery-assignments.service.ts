@@ -64,6 +64,22 @@ type SettlementLine = {
   shopName: string | null;
 };
 
+type SettlementOrderLine = {
+  orderId: string | null;
+  orderCode: string | null;
+  shopName: string | null;
+  itemCount: number;
+  subtotalBeforeDiscount: number;
+  discountAmount: number;
+  finalAmount: number;
+  paymentMethod: string | null;
+  promotionCode: string | null;
+  items: Array<{
+    productName: string;
+    quantity: number;
+  }>;
+};
+
 type SettlementSummary = {
   assignmentId: string;
   completedOrderTotal: number;
@@ -76,6 +92,7 @@ type SettlementSummary = {
   cashVarianceReason: string | null;
   remainingStopsCount: number;
   earlyClosureReason: string | null;
+  completedOrders: SettlementOrderLine[];
   returnLines: SettlementLine[];
 };
 
@@ -341,6 +358,16 @@ export class DeliveryAssignmentsService {
       throw new BadRequestException('Assignment is not active.');
     }
 
+    const hasCashMismatch =
+      Math.abs(Number(assignment.cashVarianceAmount ?? 0)) >= 0.01;
+    const trimmedReviewNote = reviewNote?.trim() || null;
+
+    if (hasCashMismatch && !trimmedReviewNote) {
+      throw new BadRequestException(
+        'Add the mismatch reason before generating the end-route PIN.',
+      );
+    }
+
     const rawPin = generatePin();
     const pinHash = await bcrypt.hash(rawPin, 10);
     const pinExpiry = new Date(Date.now() + 2 * 3600 * 1000);
@@ -348,6 +375,7 @@ export class DeliveryAssignmentsService {
     await this.assignmentsRepo.update(assignmentId, {
       tmReturnPinHash: pinHash,
       tmReturnPinExpiresAt: pinExpiry,
+      cashVarianceReason: hasCashMismatch ? trimmedReviewNote : null,
     });
 
     await this.activityService.logForUser({
@@ -359,7 +387,7 @@ export class DeliveryAssignmentsService {
         assignmentId,
         pin: rawPin,
         expiresAt: pinExpiry.toISOString(),
-        reviewNote: reviewNote?.trim() || null,
+        reviewNote: trimmedReviewNote,
       },
     });
 
@@ -575,14 +603,17 @@ export class DeliveryAssignmentsService {
     });
     const settlement = await this.buildSettlementSummary(assignment, {
       cashReturnedAmount: dto.cashReturnedAmount,
-      cashVarianceType: dto.cashVarianceType,
-      cashVarianceReason: dto.cashVarianceReason,
       earlyClosureReason: dto.earlyClosureReason,
     });
 
     await this.assignmentsRepo.update(assignmentId, {
       tmReturnPinHash: null,
       tmReturnPinExpiresAt: null,
+      expectedCashAmount: settlement.expectedCashAmount,
+      cashReturnedAmount: settlement.cashReturnedAmount,
+      cashVarianceAmount: settlement.cashVarianceAmount,
+      cashVarianceType: settlement.cashVarianceType,
+      cashVarianceReason: null,
     });
 
     const distributorName =
@@ -864,11 +895,22 @@ export class DeliveryAssignmentsService {
     }
     const settlement = await this.buildSettlementSummary(assignment, {
       cashReturnedAmount: dto.cashReturnedAmount,
-      cashVarianceType: dto.cashVarianceType,
-      cashVarianceReason: dto.cashVarianceReason,
       earlyClosureReason: dto.earlyClosureReason,
     });
     const hasCashVariance = Math.abs(settlement.cashVarianceAmount) >= 0.01;
+    const finalCashVarianceType = hasCashVariance
+      ? assignment.cashVarianceType ?? settlement.cashVarianceType
+      : null;
+    const finalCashVarianceReason = hasCashVariance
+      ? assignment.cashVarianceReason?.trim() || null
+      : null;
+
+    if (hasCashVariance && !finalCashVarianceReason) {
+      throw new BadRequestException(
+        'The territory manager must review and note the cash mismatch before the route can be closed.',
+      );
+    }
+
     const manualReturnItems =
       settlement.remainingStopsCount > 0
         ? []
@@ -907,6 +949,12 @@ export class DeliveryAssignmentsService {
           `Verified via PIN at end of trip.`,
           `Expected cash: LKR ${settlement.expectedCashAmount.toFixed(2)}.`,
           `Returned cash: LKR ${settlement.cashReturnedAmount.toFixed(2)}.`,
+          hasCashVariance && finalCashVarianceType
+            ? `Cash mismatch: ${finalCashVarianceType} (${settlement.cashVarianceAmount.toFixed(2)}).`
+            : null,
+          finalCashVarianceReason
+            ? `TM review note: ${finalCashVarianceReason}.`
+            : null,
           settlement.earlyClosureReason
             ? `Early closure reason: ${settlement.earlyClosureReason}.`
             : null,
@@ -953,10 +1001,8 @@ export class DeliveryAssignmentsService {
         expectedCashAmount: settlement.expectedCashAmount,
         cashReturnedAmount: settlement.cashReturnedAmount,
         cashVarianceAmount: settlement.cashVarianceAmount,
-        cashVarianceType: hasCashVariance ? settlement.cashVarianceType : null,
-        cashVarianceReason: hasCashVariance
-          ? settlement.cashVarianceReason
-          : null,
+        cashVarianceType: finalCashVarianceType,
+        cashVarianceReason: finalCashVarianceReason,
         settlementCompletedAt: new Date(),
       });
     });
@@ -1234,8 +1280,6 @@ export class DeliveryAssignmentsService {
     assignment: DeliveryAssignment,
     options: {
       cashReturnedAmount: number;
-      cashVarianceType?: string | null;
-      cashVarianceReason?: string | null;
       earlyClosureReason?: string | null;
     },
   ): Promise<SettlementSummary> {
@@ -1279,19 +1323,14 @@ export class DeliveryAssignmentsService {
       cashReturnedAmount - expectedCashAmount,
     );
     const hasCashVariance = Math.abs(cashVarianceAmount) >= 0.01;
-    const cashVarianceType = options.cashVarianceType?.trim() || null;
-    const cashVarianceReason = options.cashVarianceReason?.trim() || null;
+    const cashVarianceType = hasCashVariance
+      ? this.resolveCashVarianceType(cashVarianceAmount)
+      : null;
     const earlyClosureReason = options.earlyClosureReason?.trim() || null;
 
     if (pendingOrders.length > 0 && !earlyClosureReason) {
       throw new BadRequestException(
         'Add a reason before ending the route with unfinished deliveries.',
-      );
-    }
-
-    if (hasCashVariance && (!cashVarianceType || !cashVarianceReason)) {
-      throw new BadRequestException(
-        'Provide a mismatch type and reason when the returned cash does not match the expected route cash.',
       );
     }
 
@@ -1303,15 +1342,52 @@ export class DeliveryAssignmentsService {
       shopReturnValue,
       cashReturnedAmount,
       cashVarianceAmount,
-      cashVarianceType: hasCashVariance ? cashVarianceType : null,
-      cashVarianceReason: hasCashVariance ? cashVarianceReason : null,
+      cashVarianceType,
+      cashVarianceReason: null,
       remainingStopsCount: pendingOrders.length,
       earlyClosureReason,
+      completedOrders: completedOrders.map((entry) => ({
+        orderId: entry.orderId ?? null,
+        orderCode: entry.order?.orderCode ?? null,
+        shopName: entry.order?.shopNameSnapshot ?? null,
+        itemCount: (entry.order?.items ?? []).length,
+        subtotalBeforeDiscount: this.normalizeMoney(
+          Number(
+            entry.order?.subtotalBeforeDiscount ??
+              entry.order?.totalAmount ??
+              0,
+          ),
+        ),
+        discountAmount: this.normalizeMoney(
+          Number(entry.order?.promotionDiscountTotal ?? 0),
+        ),
+        finalAmount: this.normalizeMoney(
+          Number(
+            entry.order?.totalAfterDiscount ?? entry.order?.totalAmount ?? 0,
+          ),
+        ),
+        paymentMethod: entry.order?.paymentMethod ?? null,
+        promotionCode: entry.order?.appliedPromotionCode ?? null,
+        items: (entry.order?.items ?? []).map((item) => ({
+          productName: item.productNameSnapshot,
+          quantity: Number(item.quantity ?? 0),
+        })),
+      })),
       returnLines: [
         ...this.buildShopReturnLines(recordedShopReturns),
         ...this.buildPendingOrderReturnLines(pendingOrders),
       ],
     };
+  }
+
+  private resolveCashVarianceType(cashVarianceAmount: number) {
+    if (cashVarianceAmount < 0) {
+      return 'CASH_SHORT';
+    }
+    if (cashVarianceAmount > 0) {
+      return 'CASH_EXCESS';
+    }
+    return null;
   }
 
   private buildShopReturnLines(recordedShopReturns: OrderReturn[]) {

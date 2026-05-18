@@ -48,14 +48,6 @@ export class SubmitReturnDto {
 
   @IsOptional()
   @IsString()
-  cashVarianceType?: string;
-
-  @IsOptional()
-  @IsString()
-  cashVarianceReason?: string;
-
-  @IsOptional()
-  @IsString()
   earlyClosureReason?: string;
 
   @IsArray()
