@@ -71,6 +71,14 @@ export class VisitPromotionCheckDto {
   @IsString()
   promotionId: string;
 
+  @IsOptional()
+  @IsString()
+  promotionName?: string;
+
+  @IsOptional()
+  @IsString()
+  promotionCode?: string;
+
   @IsBoolean()
   informed: boolean;
 

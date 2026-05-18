@@ -4,9 +4,10 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 
 import { ActivityService } from '../activity/activity.service';
+import { OrderFeedback } from '../activity/entities/order-feedback.entity';
 import { Order } from '../orders/entities/order.entity';
 import { SalesIncident } from '../sales-incidents/entities/sales-incident.entity';
 import {
@@ -31,6 +32,8 @@ export class DailyReportsService {
     private readonly salesIncidentsRepo: Repository<SalesIncident>,
     @InjectRepository(Order)
     private readonly ordersRepo: Repository<Order>,
+    @InjectRepository(OrderFeedback)
+    private readonly orderFeedbacksRepo: Repository<OrderFeedback>,
     private readonly activityService: ActivityService,
   ) {}
 
@@ -233,6 +236,22 @@ export class DailyReportsService {
     ]);
 
     const routeOrders = salesRepOrders;
+    const routeOrderIds = routeOrders.map((order) => order.id);
+    const routeOrderFeedbacks =
+      routeOrderIds.length > 0
+        ? await this.orderFeedbacksRepo.find({
+            where: { orderId: In(routeOrderIds) },
+            order: { createdAt: 'ASC' },
+          })
+        : [];
+    const orderFeedbacksByOrderId = routeOrderFeedbacks.reduce<
+      Map<string, OrderFeedback[]>
+    >((acc, feedback) => {
+      const current = acc.get(feedback.orderId) ?? [];
+      current.push(feedback);
+      acc.set(feedback.orderId, current);
+      return acc;
+    }, new Map<string, OrderFeedback[]>());
     const completedVisits = visits.filter(
       (visit) => visit.status === 'COMPLETED',
     );
@@ -275,8 +294,26 @@ export class DailyReportsService {
     const visitsWithFeedback = completedVisits.filter(
       (visit) => !!visit.outletFeedback?.trim(),
     );
+    const incidentsByShopId = incidents.reduce<Map<string, SalesIncident[]>>(
+      (acc, incident) => {
+        if (!incident.shopId) {
+          return acc;
+        }
+
+        const current = acc.get(incident.shopId) ?? [];
+        current.push(incident);
+        acc.set(incident.shopId, current);
+        return acc;
+      },
+      new Map<string, SalesIncident[]>(),
+    );
     const visitRows = visits.map((visit) =>
-      this.serializeVisitForReport(visit),
+      this.serializeVisitForReport(
+        visit,
+        routeOrders,
+        orderFeedbacksByOrderId,
+        incidentsByShopId.get(visit.shopId ?? '') ?? [],
+      ),
     );
     const osaIssueRows = completedVisits.flatMap((visit) =>
       this.serializeVisitIssues(visit),
@@ -430,9 +467,22 @@ export class DailyReportsService {
     return 0;
   }
 
-  private serializeVisitForReport(visit: StoreVisit) {
+  private serializeVisitForReport(
+    visit: StoreVisit,
+    routeOrders: Order[],
+    orderFeedbacksByOrderId: Map<string, OrderFeedback[]>,
+    incidents: SalesIncident[],
+  ) {
     const startedAt = visit.visitStartTime ?? visit.visitStartedAt;
     const endedAt = visit.visitEndTime ?? visit.visitEndedAt;
+    const linkedOrders = routeOrders.filter((order) =>
+      this.orderBelongsToVisit(order, visit),
+    );
+    const linkedOrderFeedbacks = linkedOrders.flatMap((order) =>
+      (orderFeedbacksByOrderId.get(order.id) ?? []).map((feedback) =>
+        this.serializeOrderFeedbackForReport(feedback, order),
+      ),
+    );
 
     return {
       visitId: visit.id,
@@ -465,6 +515,15 @@ export class DailyReportsService {
       suggestedOrder: visit.suggestedOrderJson ?? null,
       photoUrls: visit.photoUrls ?? [],
       photoCount: visit.photoUrls?.length ?? 0,
+      linkedOrders: linkedOrders.map((order) => this.serializeOrderForReport(order)),
+      orderFeedbacks: linkedOrderFeedbacks,
+      incidents: incidents.map((incident) => ({
+        incidentId: incident.id,
+        type: incident.incidentType,
+        severity: incident.severity,
+        description: incident.description,
+        createdAt: incident.createdAt.toISOString(),
+      })),
     };
   }
 
@@ -538,5 +597,56 @@ export class DailyReportsService {
       acc[key] = (acc[key] ?? 0) + 1;
       return acc;
     }, {});
+  }
+
+  private orderBelongsToVisit(order: Order, visit: StoreVisit) {
+    if (visit.shopId && order.userId === visit.shopId) {
+      return true;
+    }
+
+    return (
+      order.shopNameSnapshot?.trim().toLowerCase() ===
+      visit.shopNameSnapshot?.trim().toLowerCase()
+    );
+  }
+
+  private serializeOrderForReport(order: Order) {
+    return {
+      orderId: order.id,
+      orderCode: order.orderCode,
+      status: order.status,
+      source: order.source,
+      paymentMethod: order.paymentMethod,
+      totalAmount: Number(order.totalAmount ?? 0),
+      subtotalBeforeDiscount: Number(order.subtotalBeforeDiscount ?? 0),
+      promotionDiscountTotal: Number(order.promotionDiscountTotal ?? 0),
+      totalAfterDiscount: Number(
+        order.totalAfterDiscount ?? order.totalAmount ?? 0,
+      ),
+      appliedPromotionCode: order.appliedPromotionCode,
+      placedAt: order.placedAt?.toISOString?.() ?? order.placedAt,
+      itemCount: order.items?.length ?? 0,
+      items: (order.items ?? []).map((item) => ({
+        productId: item.productId,
+        productName: item.productNameSnapshot,
+        quantity: Number(item.quantity ?? 0),
+        lineTotal: Number(item.lineTotal ?? 0),
+        casePrice: Number(item.casePriceSnapshot ?? 0),
+      })),
+    };
+  }
+
+  private serializeOrderFeedbackForReport(
+    feedback: OrderFeedback,
+    order: Order,
+  ) {
+    return {
+      feedbackId: feedback.id,
+      orderId: feedback.orderId,
+      orderCode: order.orderCode,
+      rating: feedback.rating,
+      comment: feedback.comment,
+      createdAt: feedback.createdAt?.toISOString?.() ?? null,
+    };
   }
 }

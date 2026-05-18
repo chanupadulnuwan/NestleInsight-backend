@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { ActivityModule } from '../activity/activity.module';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
+import { OrderFeedback } from '../activity/entities/order-feedback.entity';
 import { AssistedOrderRequest } from '../orders/entities/assisted-order-request.entity';
 import { Order } from '../orders/entities/order.entity';
 import { SalesIncident } from '../sales-incidents/entities/sales-incident.entity';
@@ -22,6 +23,7 @@ import { DailyReportsService } from './daily-reports.service';
       SalesIncident,
       AssistedOrderRequest,
       Order,
+      OrderFeedback,
     ]),
     ActivityModule,
   ],
