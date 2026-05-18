@@ -74,6 +74,13 @@ type OutletShopOwnerMatch = {
   matchSource: string;
 };
 
+type AdminOrderFilters = {
+  territoryId?: string;
+  warehouseId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+};
+
 @Injectable()
 export class OrdersService {
   constructor(
@@ -247,6 +254,76 @@ export class OrdersService {
     return {
       message: 'orders fetched successfully',
       orders: orders.map((order) => this.serializeOrder(order)),
+    };
+  }
+
+  async listAdminOrders(filters: AdminOrderFilters) {
+    const territoryId = this.normalizeOptionalFilter(filters.territoryId);
+    const warehouseId = this.normalizeOptionalFilter(filters.warehouseId);
+    const dateFrom = this.normalizeOptionalDate(filters.dateFrom, 'dateFrom');
+    const dateTo = this.normalizeOptionalDate(filters.dateTo, 'dateTo');
+
+    if (dateFrom && dateTo && dateFrom > dateTo) {
+      throw new BadRequestException(
+        'The start date must be before the end date.',
+      );
+    }
+
+    const query = this.ordersRepository
+      .createQueryBuilder('order')
+      .leftJoinAndSelect('order.territory', 'territory')
+      .leftJoinAndSelect('order.warehouse', 'warehouse')
+      .leftJoinAndSelect('order.items', 'items')
+      .orderBy('order.placedAt', 'DESC');
+
+    if (territoryId) {
+      query.andWhere('order.territoryId = :territoryId', { territoryId });
+    }
+
+    if (warehouseId) {
+      query.andWhere('order.warehouseId = :warehouseId', { warehouseId });
+    }
+
+    if (dateFrom) {
+      query.andWhere('order.placedAt >= :dateFrom', {
+        dateFrom: `${dateFrom} 00:00:00.000`,
+      });
+    }
+
+    if (dateTo) {
+      query.andWhere('order.placedAt <= :dateTo', {
+        dateTo: `${dateTo} 23:59:59.999`,
+      });
+    }
+
+    const orders = await query.getMany();
+
+    await this.syncAutomaticDelays(orders);
+
+    return {
+      message: 'Admin orders fetched successfully.',
+      orders: orders.map((order) => this.serializeOrderSummary(order)),
+    };
+  }
+
+  async getAdminOrderDetails(orderId: string) {
+    const order = await this.ordersRepository.findOne({
+      where: { id: orderId },
+      relations: {
+        territory: true,
+        warehouse: true,
+      },
+    });
+
+    if (!order) {
+      throw new NotFoundException('Order was not found.');
+    }
+
+    await this.syncAutomaticDelayForOrder(order);
+
+    return {
+      message: 'Admin order fetched successfully.',
+      order: this.serializeOrder(order),
     };
   }
 
@@ -1310,6 +1387,26 @@ export class OrdersService {
     return value?.replace(/\D/g, '') ?? '';
   }
 
+  private normalizeOptionalFilter(value?: string | null) {
+    const trimmedValue = value?.trim();
+    return trimmedValue ? trimmedValue : undefined;
+  }
+
+  private normalizeOptionalDate(value?: string | null, fieldName?: string) {
+    const trimmedValue = value?.trim();
+    if (!trimmedValue) {
+      return undefined;
+    }
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmedValue)) {
+      throw new BadRequestException(
+        `${fieldName ?? 'Date'} must use the YYYY-MM-DD format.`,
+      );
+    }
+
+    return trimmedValue;
+  }
+
   private async findSerializedOrderById(orderId: string) {
     const order = await this.ordersRepository.findOne({
       where: { id: orderId },
@@ -1374,6 +1471,44 @@ export class OrdersService {
         quantity: item.quantity,
         lineTotal: item.lineTotal,
       })),
+    };
+  }
+
+  private serializeOrderSummary(order: Order) {
+    const deliveryDueAt = getOrderDueAt(order.placedAt);
+
+    return {
+      id: order.id,
+      orderCode: order.orderCode,
+      userId: order.userId,
+      shopName: order.shopNameSnapshot,
+      territoryId: order.territoryId,
+      territoryName: order.territory?.name ?? null,
+      warehouseId: order.warehouseId,
+      warehouseName: order.warehouse?.name ?? null,
+      status: order.status,
+      source: order.source,
+      paymentMethod: order.paymentMethod,
+      currencyCode: order.currencyCode,
+      totalAmount: order.totalAmount,
+      appliedPromotionId: order.appliedPromotionId,
+      appliedPromotionCode: order.appliedPromotionCode,
+      subtotalBeforeDiscount: order.subtotalBeforeDiscount,
+      promotionDiscountTotal: order.promotionDiscountTotal,
+      totalAfterDiscount: order.totalAfterDiscount,
+      placedAt: order.placedAt,
+      approvedAt: order.approvedAt,
+      customerNote: order.customerNote,
+      delayReason: order.delayReason,
+      delayedAt: order.delayedAt,
+      deliveryDueAt: deliveryDueAt.toISOString(),
+      isOverdue: isOrderOverdue(order),
+      createdAt: order.createdAt,
+      itemCount: order.items.length,
+      totalCases: order.items.reduce(
+        (sum, item) => sum + Number(item.quantity || 0),
+        0,
+      ),
     };
   }
 

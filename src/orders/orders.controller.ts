@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   Post,
+  Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
@@ -23,6 +24,28 @@ import { OrdersService } from './orders.service';
 @UseGuards(JwtAuthGuard, RolesGuard)
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
+
+  @Get('admin')
+  @Roles(Role.ADMIN)
+  listAdminOrders(
+    @Query('territoryId') territoryId?: string,
+    @Query('warehouseId') warehouseId?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+  ) {
+    return this.ordersService.listAdminOrders({
+      territoryId,
+      warehouseId,
+      dateFrom,
+      dateTo,
+    });
+  }
+
+  @Get('admin/:orderId')
+  @Roles(Role.ADMIN)
+  getAdminOrderDetails(@Param('orderId') orderId: string) {
+    return this.ordersService.getAdminOrderDetails(orderId);
+  }
 
   @Get()
   @Roles(Role.SHOP_OWNER)
