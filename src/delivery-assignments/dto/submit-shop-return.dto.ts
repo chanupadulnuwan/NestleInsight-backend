@@ -34,6 +34,14 @@ export class ShopReturnItemDto {
   @IsOptional()
   @IsNumber()
   unitPrice?: number;
+
+  @IsOptional()
+  @IsNumber()
+  itemUnitPrice?: number;
+
+  @IsOptional()
+  @IsNumber()
+  productsPerCase?: number;
 }
 
 export class SubmitShopReturnDto {

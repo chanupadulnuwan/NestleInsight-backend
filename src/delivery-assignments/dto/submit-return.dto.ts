@@ -1,5 +1,6 @@
 import {
   IsArray,
+  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
@@ -23,8 +24,16 @@ export class ReturnItemDto {
   @Min(1)
   quantity: number;
 
+  @IsOptional()
+  @IsIn(['ITEM', 'CASE'])
+  unitType?: 'ITEM' | 'CASE';
+
   @IsString()
   reason: string;
+
+  @IsOptional()
+  @IsString()
+  reasonNote?: string;
 }
 
 export class SubmitReturnDto {
@@ -44,6 +53,10 @@ export class SubmitReturnDto {
   @IsOptional()
   @IsString()
   cashVarianceReason?: string;
+
+  @IsOptional()
+  @IsString()
+  earlyClosureReason?: string;
 
   @IsArray()
   @ValidateNested({ each: true })

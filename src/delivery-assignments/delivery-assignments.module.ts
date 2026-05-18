@@ -6,6 +6,7 @@ import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { PortalApprovalGuard } from '../auth/guards/portal-approval.guard';
 import { RolesGuard } from '../auth/guards/roles.guard';
 import { Order } from '../orders/entities/order.entity';
+import { Product } from '../products/entities/product.entity';
 import { User } from '../users/entities/user.entity';
 import { Vehicle } from '../vehicles/entities/vehicle.entity';
 import { WarehouseInventoryItem } from '../warehouses/entities/warehouse-inventory-item.entity';
@@ -27,6 +28,7 @@ import { ReturnItem } from './entities/return-item.entity';
       ReturnItem,
       IncidentReport,
       Order,
+      Product,
       User,
       Vehicle,
       WarehouseInventoryItem,

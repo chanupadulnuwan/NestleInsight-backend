@@ -9,6 +9,7 @@ import {
 } from 'typeorm';
 
 import { User } from '../../users/entities/user.entity';
+import { Order } from '../../orders/entities/order.entity';
 import { DeliveryAssignment } from './delivery-assignment.entity';
 import { ReturnItem } from './return-item.entity';
 
@@ -41,6 +42,10 @@ export class OrderReturn {
 
   @Column({ name: 'order_id', type: 'uuid', nullable: true })
   orderId: string | null;
+
+  @ManyToOne(() => Order, { nullable: true, onDelete: 'SET NULL' })
+  @JoinColumn({ name: 'order_id' })
+  order: Order | null;
 
   @Column({ name: 'tm_verified', type: 'boolean', default: false })
   tmVerified: boolean;

@@ -15,12 +15,14 @@ import {
   isOrderOverdue,
   isProceedOrderStatus,
 } from '../orders/order-status.util';
+import { Product } from '../products/entities/product.entity';
 import { User } from '../users/entities/user.entity';
 import { Vehicle } from '../vehicles/entities/vehicle.entity';
 import { WarehouseInventoryItem } from '../warehouses/entities/warehouse-inventory-item.entity';
 import { AddNoteDto } from './dto/add-note.dto';
 import { CreateAssignmentDto } from './dto/create-assignment.dto';
 import { ReportIncidentDto } from './dto/report-incident.dto';
+import { RequestEndRouteReviewDto } from './dto/request-end-route-review.dto';
 import { SubmitShopReturnDto } from './dto/submit-shop-return.dto';
 import { ReturnItemDto, SubmitReturnDto } from './dto/submit-return.dto';
 import { DeliveryAssignmentOrder } from './entities/delivery-assignment-order.entity';
@@ -49,6 +51,34 @@ type RefillAlert = {
   refillLevel: number;
 };
 
+type SettlementLine = {
+  productId: string | null;
+  productName: string;
+  quantity: number;
+  reason: string;
+  unitType: 'CASE' | 'ITEM';
+  reasonNote: string | null;
+  source: 'SHOP_RETURN' | 'UNFINISHED_DELIVERY';
+  orderId: string | null;
+  orderCode: string | null;
+  shopName: string | null;
+};
+
+type SettlementSummary = {
+  assignmentId: string;
+  completedOrderTotal: number;
+  pendingOrderValue: number;
+  expectedCashAmount: number;
+  shopReturnValue: number;
+  cashReturnedAmount: number;
+  cashVarianceAmount: number;
+  cashVarianceType: string | null;
+  cashVarianceReason: string | null;
+  remainingStopsCount: number;
+  earlyClosureReason: string | null;
+  returnLines: SettlementLine[];
+};
+
 @Injectable()
 export class DeliveryAssignmentsService {
   constructor(
@@ -58,6 +88,8 @@ export class DeliveryAssignmentsService {
     private readonly daoRepo: Repository<DeliveryAssignmentOrder>,
     @InjectRepository(Order)
     private readonly ordersRepo: Repository<Order>,
+    @InjectRepository(Product)
+    private readonly productsRepo: Repository<Product>,
     @InjectRepository(OrderReturn)
     private readonly returnsRepo: Repository<OrderReturn>,
     @InjectRepository(ReturnItem)
@@ -293,7 +325,11 @@ export class DeliveryAssignmentsService {
     };
   }
 
-  async generateReturnPin(tmUserId: string, assignmentId: string) {
+  async generateReturnPin(
+    tmUserId: string,
+    assignmentId: string,
+    reviewNote?: string,
+  ) {
     const assignment = await this.requireAssignment(assignmentId);
 
     if (assignment.territoryManagerId !== tmUserId) {
@@ -323,6 +359,7 @@ export class DeliveryAssignmentsService {
         assignmentId,
         pin: rawPin,
         expiresAt: pinExpiry.toISOString(),
+        reviewNote: reviewNote?.trim() || null,
       },
     });
 
@@ -433,9 +470,24 @@ export class DeliveryAssignmentsService {
     const distributor = await this.usersRepo.findOne({
       where: { id: distributorId },
     });
-    const totalValue = dto.items.reduce(
-      (s, i) => s + (i.unitPrice ?? 0) * i.quantity,
-      0,
+    const productIds = dto.items
+      .map((item) => item.productId?.trim())
+      .filter((productId): productId is string => !!productId);
+    const products = productIds.length
+      ? await this.productsRepo.find({ where: { id: In(productIds) } })
+      : [];
+    const productById = new Map(products.map((product) => [product.id, product]));
+    const totalValue = Number(
+      dto.items
+        .reduce((sum, item) => {
+          const product = item.productId ? productById.get(item.productId) : null;
+          const usesItemPricing = item.unitType === 'ITEM';
+          const resolvedUnitPrice = usesItemPricing
+            ? Number(product?.unitPrice ?? item.itemUnitPrice ?? 0)
+            : Number(product?.casePrice ?? item.unitPrice ?? 0);
+          return sum + resolvedUnitPrice * Number(item.quantity ?? 0);
+        }, 0)
+        .toFixed(2),
     );
 
     await this.returnsRepo.manager.transaction(async (manager) => {
@@ -460,7 +512,11 @@ export class DeliveryAssignmentsService {
             productId: item.productId ?? null,
             productNameSnapshot: item.productNameSnapshot,
             quantity: item.quantity,
-            reason: `${item.reason}${item.reasonNote ? ': ' + item.reasonNote : ''}`,
+            reason: this.encodeReturnReason(
+              item.reason,
+              item.unitType,
+              item.reasonNote,
+            ),
           }),
         ),
       );
@@ -499,38 +555,61 @@ export class DeliveryAssignmentsService {
     return { message: 'Shop return recorded successfully.' };
   }
 
-  async requestWarehouseReturnPin(distributorId: string, assignmentId: string) {
-    const assignment = await this.requireAssignment(assignmentId);
+  async requestWarehouseReturnPin(
+    distributorId: string,
+    assignmentId: string,
+    dto: RequestEndRouteReviewDto,
+  ) {
+    const assignment = await this.loadDetailedAssignmentForSettlement(
+      assignmentId,
+    );
     if (assignment.distributorId !== distributorId) {
       throw new BadRequestException('This assignment does not belong to you.');
     }
-    if (assignment.status !== 'ACTIVE')
+    if (assignment.status !== 'ACTIVE') {
       throw new BadRequestException('Assignment is not active.');
+    }
 
-    const rawPin = generatePin();
-    const pinHash = await bcrypt.hash(rawPin, 10);
-    const pinExpiry = new Date(Date.now() + 2 * 3600 * 1000);
+    const distributor = await this.usersRepo.findOne({
+      where: { id: distributorId },
+    });
+    const settlement = await this.buildSettlementSummary(assignment, {
+      cashReturnedAmount: dto.cashReturnedAmount,
+      cashVarianceType: dto.cashVarianceType,
+      cashVarianceReason: dto.cashVarianceReason,
+      earlyClosureReason: dto.earlyClosureReason,
+    });
 
     await this.assignmentsRepo.update(assignmentId, {
-      tmReturnPinHash: pinHash,
-      tmReturnPinExpiresAt: pinExpiry,
+      tmReturnPinHash: null,
+      tmReturnPinExpiresAt: null,
     });
+
+    const distributorName =
+      distributor &&
+      `${distributor.firstName ?? ''} ${distributor.lastName ?? ''}`.trim()
+        ? `${distributor.firstName ?? ''} ${distributor.lastName ?? ''}`.trim()
+        : 'Distributor';
 
     await this.activityService.logForUser({
       userId: assignment.territoryManagerId,
       type: 'WAREHOUSE_RETURN_PIN_REQUESTED',
-      title: 'Distributor ready to return to warehouse',
-      message: `Your distributor is ready to return products to the warehouse. Return confirmation PIN: ${rawPin}. Share this with your distributor to close the trip. Expires in 2 hours.`,
+      title: 'End route review requested',
+      message: `${distributorName} asked to close today’s route. Review the returned products, unfinished deliveries, and cash settlement before generating the end-route PIN.`,
       metadata: {
         assignmentId,
-        pin: rawPin,
-        expiresAt: pinExpiry.toISOString(),
+        distributorId,
+        distributorName,
+        deliveryDate: assignment.deliveryDate,
+        settlement,
+        requestedAt: new Date().toISOString(),
       },
     });
 
     return {
       message:
-        'PIN sent to Territory Manager. Ask them for the PIN to proceed.',
+        'End-route review sent to your Territory Manager. They can generate the 6-digit PIN after checking returns and cash.',
+      settlement,
     };
   }
 
@@ -595,7 +674,9 @@ export class DeliveryAssignmentsService {
     const assignments = await query.getMany();
     return {
       message: 'Assignments fetched.',
-      assignments: assignments.map(this.serializeAssignment),
+      assignments: assignments.map((assignment) =>
+        this.serializeAssignment(assignment),
+      ),
     };
   }
 
@@ -608,6 +689,7 @@ export class DeliveryAssignmentsService {
       .createQueryBuilder('r')
       .innerJoinAndSelect('r.distributor', 'distributor')
       .innerJoinAndSelect('r.items', 'items')
+      .leftJoinAndSelect('r.order', 'order')
       .leftJoin('r.assignment', 'assignment')
       .where('distributor.warehouse_id = :warehouseId', {
         warehouseId: tm.warehouseId,
@@ -659,9 +741,11 @@ export class DeliveryAssignmentsService {
       return { message: 'No active assignment for today.', assignment: null };
     }
 
+    const returns = await this.listAssignmentReturns(assignment.id);
+
     return {
       message: 'Assignment fetched.',
-      assignment: this.serializeAssignment(assignment),
+      assignment: this.serializeAssignment(assignment, returns),
     };
   }
 
@@ -741,7 +825,9 @@ export class DeliveryAssignmentsService {
     assignmentId: string,
     dto: SubmitReturnDto,
   ) {
-    const assignment = await this.requireAssignment(assignmentId);
+    const assignment = await this.loadDetailedAssignmentForSettlement(
+      assignmentId,
+    );
 
     if (assignment.distributorId !== distributorId) {
       throw new BadRequestException('This assignment does not belong to you.');
@@ -776,47 +862,34 @@ export class DeliveryAssignmentsService {
         'Distributor is not assigned to a warehouse.',
       );
     }
-
-    const completedOrderTotal = Number(
-      (assignment.assignmentOrders ?? [])
-        .reduce((sum, dao) => {
-          if (dao.order?.status !== 'COMPLETED') {
-            return sum;
-          }
-
-          return sum + (dao.order.totalAfterDiscount ?? dao.order.totalAmount);
-        }, 0)
-        .toFixed(2),
-    );
-    const recordedShopReturns = await this.returnsRepo.find({
-      where: {
-        assignmentId,
-        returnType: 'SHOP',
-      },
+    const settlement = await this.buildSettlementSummary(assignment, {
+      cashReturnedAmount: dto.cashReturnedAmount,
+      cashVarianceType: dto.cashVarianceType,
+      cashVarianceReason: dto.cashVarianceReason,
+      earlyClosureReason: dto.earlyClosureReason,
     });
-    const shopReturnValue = Number(
-      recordedShopReturns
-        .reduce((sum, orderReturn) => sum + (orderReturn.estimatedValue ?? 0), 0)
-        .toFixed(2),
-    );
-    const expectedCashAmount = Number(
-      Math.max(0, completedOrderTotal - shopReturnValue).toFixed(2),
-    );
-    const cashReturnedAmount = Number(
-      Number(dto.cashReturnedAmount ?? 0).toFixed(2),
-    );
-    const cashVarianceAmount = Number(
-      (cashReturnedAmount - expectedCashAmount).toFixed(2),
-    );
-    const hasCashVariance = Math.abs(cashVarianceAmount) >= 0.01;
-    const cashVarianceType = dto.cashVarianceType?.trim() || null;
-    const cashVarianceReason = dto.cashVarianceReason?.trim() || null;
-
-    if (hasCashVariance && (!cashVarianceType || !cashVarianceReason)) {
-      throw new BadRequestException(
-        'Provide a mismatch type and reason when the returned cash does not match the expected route cash.',
-      );
-    }
+    const hasCashVariance = Math.abs(settlement.cashVarianceAmount) >= 0.01;
+    const manualReturnItems =
+      settlement.remainingStopsCount > 0
+        ? []
+        : (dto.items ?? []).map((item) => ({
+            productId: item.productId ?? null,
+            productName: item.productNameSnapshot,
+            quantity: item.quantity,
+            reason: item.reason,
+            unitType: item.unitType === 'ITEM' ? 'ITEM' : 'CASE',
+            reasonNote: item.reasonNote?.trim() || null,
+            source: 'UNFINISHED_DELIVERY' as const,
+            orderId: null,
+            orderCode: null,
+            shopName: null,
+          }));
+    const warehouseReturnLines = [
+      ...settlement.returnLines.filter(
+        (line) => line.source === 'UNFINISHED_DELIVERY',
+      ),
+      ...manualReturnItems,
+    ];
 
     await this.returnsRepo.manager.transaction(async (manager) => {
       const orderReturnRepo = manager.getRepository(OrderReturn);
@@ -827,38 +900,63 @@ export class DeliveryAssignmentsService {
       const orderReturn = orderReturnRepo.create({
         assignmentId,
         distributorId,
+        returnType: 'WAREHOUSE',
         tmVerified: true,
-        estimatedValue: null,
-        verificationNote: `Verified via PIN at end of trip. Expected cash: LKR ${expectedCashAmount.toFixed(2)}. Returned cash: LKR ${cashReturnedAmount.toFixed(2)}.`,
+        estimatedValue: settlement.pendingOrderValue,
+        verificationNote: [
+          `Verified via PIN at end of trip.`,
+          `Expected cash: LKR ${settlement.expectedCashAmount.toFixed(2)}.`,
+          `Returned cash: LKR ${settlement.cashReturnedAmount.toFixed(2)}.`,
+          settlement.earlyClosureReason
+            ? `Early closure reason: ${settlement.earlyClosureReason}.`
+            : null,
+        ]
+          .filter((entry): entry is string => !!entry)
+          .join(' '),
       });
       const savedReturn = await orderReturnRepo.save(orderReturn);
 
-      const items = dto.items.map((item: ReturnItemDto) =>
+      const items = warehouseReturnLines.map((item) =>
         returnItemRepo.create({
           returnId: savedReturn.id,
           productId: item.productId ?? null,
-          productNameSnapshot: item.productNameSnapshot,
+          productNameSnapshot: item.productName,
           quantity: item.quantity,
-          reason: item.reason,
+          reason: this.encodeReturnReason(
+            item.reason,
+            item.unitType,
+            item.reasonNote,
+          ),
         }),
       );
-      await returnItemRepo.save(items);
+      if (items.length > 0) {
+        await returnItemRepo.save(items);
+      }
 
       await this.restockReturnedProducts(
         inventoryRepo,
         distributor.warehouseId!,
-        dto.items,
+        warehouseReturnLines.map((item) => ({
+          productId: item.productId,
+          productNameSnapshot: item.productName,
+          quantity: item.quantity,
+          unitType: item.unitType === 'ITEM' ? 'ITEM' : 'CASE',
+          reason: item.reason,
+          reasonNote: item.reasonNote,
+        })),
       );
 
       await assignmentRepo.update(assignmentId, {
         status: 'COMPLETED',
         tmReturnPinHash: null,
         tmReturnPinExpiresAt: null,
-        expectedCashAmount,
-        cashReturnedAmount,
-        cashVarianceAmount,
-        cashVarianceType: hasCashVariance ? cashVarianceType : null,
-        cashVarianceReason: hasCashVariance ? cashVarianceReason : null,
+        expectedCashAmount: settlement.expectedCashAmount,
+        cashReturnedAmount: settlement.cashReturnedAmount,
+        cashVarianceAmount: settlement.cashVarianceAmount,
+        cashVarianceType: hasCashVariance ? settlement.cashVarianceType : null,
+        cashVarianceReason: hasCashVariance
+          ? settlement.cashVarianceReason
+          : null,
         settlementCompletedAt: new Date(),
       });
     });
@@ -1006,7 +1104,14 @@ export class DeliveryAssignmentsService {
   private async restockReturnedProducts(
     inventoryRepo: Repository<WarehouseInventoryItem>,
     warehouseId: string,
-    returnItems: ReturnItemDto[],
+    returnItems: Array<{
+      productId?: string | null;
+      productNameSnapshot: string;
+      quantity: number;
+      unitType?: 'ITEM' | 'CASE';
+      reason: string;
+      reasonNote?: string | null;
+    }>,
   ) {
     const aggregatedReturns = new Map<
       string,
@@ -1014,7 +1119,11 @@ export class DeliveryAssignmentsService {
     >();
 
     for (const item of returnItems) {
-      if (!item.productId || !this.shouldRestockWarehouseReturn(item.reason)) {
+      if (
+        !item.productId ||
+        item.unitType === 'ITEM' ||
+        !this.shouldRestockWarehouseReturn(item.reason)
+      ) {
         continue;
       }
 
@@ -1070,7 +1179,7 @@ export class DeliveryAssignmentsService {
   }
 
   private shouldRestockWarehouseReturn(reason: string) {
-    const normalizedReason = reason.trim().toUpperCase();
+    const normalizedReason = this.decodeReturnReason(reason).reason;
     if (!normalizedReason) {
       return false;
     }
@@ -1079,6 +1188,236 @@ export class DeliveryAssignmentsService {
       !normalizedReason.includes('EXPIRED')
       ? true
       : false;
+  }
+
+  private async loadDetailedAssignmentForSettlement(assignmentId: string) {
+    const assignment = await this.assignmentsRepo.findOne({
+      where: { id: assignmentId },
+      relations: {
+        assignmentOrders: {
+          order: {
+            user: true,
+            items: true,
+          },
+        },
+        distributor: true,
+        vehicle: true,
+      },
+    });
+
+    if (!assignment) {
+      throw new NotFoundException('Assignment not found.');
+    }
+
+    return assignment;
+  }
+
+  private async listAssignmentReturns(
+    assignmentId: string,
+    returnType?: string,
+  ) {
+    return this.returnsRepo.find({
+      where: {
+        assignmentId,
+        ...(returnType ? { returnType } : {}),
+      },
+      relations: {
+        order: true,
+      },
+      order: {
+        createdAt: 'DESC',
+      },
+    });
+  }
+
+  private async buildSettlementSummary(
+    assignment: DeliveryAssignment,
+    options: {
+      cashReturnedAmount: number;
+      cashVarianceType?: string | null;
+      cashVarianceReason?: string | null;
+      earlyClosureReason?: string | null;
+    },
+  ): Promise<SettlementSummary> {
+    const recordedShopReturns = await this.listAssignmentReturns(
+      assignment.id,
+      'SHOP',
+    );
+    const completedOrders = (assignment.assignmentOrders ?? []).filter(
+      (entry) => entry.order?.status === 'COMPLETED',
+    );
+    const pendingOrders = (assignment.assignmentOrders ?? []).filter(
+      (entry) => entry.order?.status !== 'COMPLETED',
+    );
+    const completedOrderTotal = this.normalizeMoney(
+      completedOrders.reduce(
+        (sum, entry) =>
+          sum + Number(entry.order?.totalAfterDiscount ?? entry.order?.totalAmount ?? 0),
+        0,
+      ),
+    );
+    const pendingOrderValue = this.normalizeMoney(
+      pendingOrders.reduce(
+        (sum, entry) =>
+          sum + Number(entry.order?.totalAfterDiscount ?? entry.order?.totalAmount ?? 0),
+        0,
+      ),
+    );
+    const shopReturnValue = this.normalizeMoney(
+      recordedShopReturns.reduce(
+        (sum, orderReturn) => sum + Number(orderReturn.estimatedValue ?? 0),
+        0,
+      ),
+    );
+    const expectedCashAmount = this.normalizeMoney(
+      Math.max(0, completedOrderTotal - shopReturnValue),
+    );
+    const cashReturnedAmount = this.normalizeMoney(
+      Number(options.cashReturnedAmount ?? 0),
+    );
+    const cashVarianceAmount = this.normalizeMoney(
+      cashReturnedAmount - expectedCashAmount,
+    );
+    const hasCashVariance = Math.abs(cashVarianceAmount) >= 0.01;
+    const cashVarianceType = options.cashVarianceType?.trim() || null;
+    const cashVarianceReason = options.cashVarianceReason?.trim() || null;
+    const earlyClosureReason = options.earlyClosureReason?.trim() || null;
+
+    if (pendingOrders.length > 0 && !earlyClosureReason) {
+      throw new BadRequestException(
+        'Add a reason before ending the route with unfinished deliveries.',
+      );
+    }
+
+    if (hasCashVariance && (!cashVarianceType || !cashVarianceReason)) {
+      throw new BadRequestException(
+        'Provide a mismatch type and reason when the returned cash does not match the expected route cash.',
+      );
+    }
+
+    return {
+      assignmentId: assignment.id,
+      completedOrderTotal,
+      pendingOrderValue,
+      expectedCashAmount,
+      shopReturnValue,
+      cashReturnedAmount,
+      cashVarianceAmount,
+      cashVarianceType: hasCashVariance ? cashVarianceType : null,
+      cashVarianceReason: hasCashVariance ? cashVarianceReason : null,
+      remainingStopsCount: pendingOrders.length,
+      earlyClosureReason,
+      returnLines: [
+        ...this.buildShopReturnLines(recordedShopReturns),
+        ...this.buildPendingOrderReturnLines(pendingOrders),
+      ],
+    };
+  }
+
+  private buildShopReturnLines(recordedShopReturns: OrderReturn[]) {
+    const lines: SettlementLine[] = [];
+
+    for (const orderReturn of recordedShopReturns) {
+      for (const item of orderReturn.items ?? []) {
+        const decoded = this.decodeReturnReason(item.reason);
+        lines.push({
+          productId: item.productId ?? null,
+          productName: item.productNameSnapshot,
+          quantity: Number(item.quantity ?? 0),
+          reason: decoded.reason,
+          unitType: decoded.unitType ?? 'CASE',
+          reasonNote: decoded.reasonNote,
+          source: 'SHOP_RETURN',
+          orderId: orderReturn.orderId ?? null,
+          orderCode: orderReturn.order?.orderCode ?? null,
+          shopName: orderReturn.order?.shopNameSnapshot ?? null,
+        });
+      }
+    }
+
+    return lines;
+  }
+
+  private buildPendingOrderReturnLines(
+    pendingOrders: DeliveryAssignmentOrder[],
+  ): SettlementLine[] {
+    const lines: SettlementLine[] = [];
+
+    for (const assignmentOrder of pendingOrders) {
+      for (const item of assignmentOrder.order?.items ?? []) {
+        lines.push({
+          productId: item.productId ?? null,
+          productName: item.productNameSnapshot,
+          quantity: Number(item.quantity ?? 0),
+          reason: 'UNFINISHED_DELIVERY',
+          unitType: 'CASE',
+          reasonNote: 'Delivery was ended before this order was completed.',
+          source: 'UNFINISHED_DELIVERY',
+          orderId: assignmentOrder.orderId ?? null,
+          orderCode: assignmentOrder.order?.orderCode ?? null,
+          shopName: assignmentOrder.order?.shopNameSnapshot ?? null,
+        });
+      }
+    }
+
+    return lines;
+  }
+
+  private encodeReturnReason(
+    reason: string,
+    unitType?: string | null,
+    reasonNote?: string | null,
+  ) {
+    return JSON.stringify({
+      reason: reason.trim().toUpperCase(),
+      unitType:
+        unitType?.trim().toUpperCase() === 'ITEM' ? 'ITEM' : 'CASE',
+      reasonNote: reasonNote?.trim() || null,
+    });
+  }
+
+  private decodeReturnReason(reason: string) {
+    const raw = reason.trim();
+    if (!raw) {
+      return {
+        reason: '',
+        unitType: null as 'ITEM' | 'CASE' | null,
+        reasonNote: null as string | null,
+      };
+    }
+
+    if (raw.startsWith('{')) {
+      try {
+        const parsed = JSON.parse(raw) as {
+          reason?: string;
+          unitType?: string;
+          reasonNote?: string | null;
+        };
+        return {
+          reason: parsed.reason?.trim().toUpperCase() || '',
+          unitType:
+            parsed.unitType?.trim().toUpperCase() === 'ITEM'
+              ? ('ITEM' as const)
+              : parsed.unitType?.trim().toUpperCase() === 'CASE'
+                ? ('CASE' as const)
+                : null,
+          reasonNote: parsed.reasonNote?.trim() || null,
+        };
+      } catch {
+        // Fall back to the legacy plain-text reason format below.
+      }
+    }
+
+    const legacyParts = raw.split(':');
+    return {
+      reason: legacyParts[0]?.trim().toUpperCase() || raw.toUpperCase(),
+      unitType: null as 'ITEM' | 'CASE' | null,
+      reasonNote: legacyParts.slice(1).join(':').trim() || null,
+    };
+  }
+
+  private normalizeMoney(value: number) {
+    return Number(value.toFixed(2));
   }
 
   private buildDeliveryStartedNote(
@@ -1102,7 +1441,10 @@ export class DeliveryAssignmentsService {
     });
   }
 
-  private serializeAssignment(a: DeliveryAssignment) {
+  private serializeAssignment(
+    a: DeliveryAssignment,
+    recordedReturns: OrderReturn[] = [],
+  ) {
     return {
       id: a.id,
       distributorId: a.distributorId,
@@ -1147,16 +1489,24 @@ export class DeliveryAssignmentsService {
             id: item.id,
             productId: item.productId,
             productName: item.productNameSnapshot,
+            packSize: item.packSizeSnapshot,
             quantity: item.quantity,
             lineTotal: item.lineTotal,
-            unitPrice: item.quantity > 0 ? item.lineTotal / item.quantity : 0,
+            casePrice: Number(item.casePriceSnapshot ?? 0),
+            unitPrice: Number(item.casePriceSnapshot ?? 0),
+            itemUnitPrice: Number(item.product?.unitPrice ?? 0),
+            productsPerCase: Number(item.product?.productsPerCase ?? 1),
           })),
         })),
+      returns: recordedReturns.map((orderReturn) =>
+        this.serializeReturn(orderReturn),
+      ),
       createdAt: a.createdAt,
     };
   }
 
   private serializeReturn(r: OrderReturn) {
+    const orderReference = r.order ?? null;
     return {
       id: r.id,
       assignmentId: r.assignmentId,
@@ -1164,15 +1514,19 @@ export class DeliveryAssignmentsService {
       distributorName: r.distributor
         ? `${r.distributor.firstName} ${r.distributor.lastName}`
         : null,
+      returnType: r.returnType,
+      orderId: r.orderId,
+      orderCode: orderReference?.orderCode ?? null,
+      shopName: orderReference?.shopNameSnapshot ?? null,
       tmVerified: r.tmVerified,
       verificationNote: r.verificationNote,
       estimatedValue: r.estimatedValue ?? null,
       items: (r.items ?? []).map((item) => ({
+        ...this.decodeReturnReason(item.reason),
         id: item.id,
         productId: item.productId,
         productName: item.productNameSnapshot,
         quantity: item.quantity,
-        reason: item.reason,
       })),
       createdAt: r.createdAt,
     };

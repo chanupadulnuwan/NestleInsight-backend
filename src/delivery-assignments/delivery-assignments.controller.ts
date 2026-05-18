@@ -20,6 +20,7 @@ import { AddNoteDto } from './dto/add-note.dto';
 import { CompleteOrderDto } from './dto/complete-order.dto';
 import { CreateAssignmentDto } from './dto/create-assignment.dto';
 import { GenerateReturnPinDto } from './dto/generate-return-pin.dto';
+import { RequestEndRouteReviewDto } from './dto/request-end-route-review.dto';
 import { ReportIncidentDto } from './dto/report-incident.dto';
 import { SubmitShopReturnDto } from './dto/submit-shop-return.dto';
 import { SubmitReturnDto } from './dto/submit-return.dto';
@@ -48,7 +49,11 @@ export class DeliveryAssignmentsController {
   @UseGuards(JwtAuthGuard, RolesGuard, PortalApprovalGuard)
   @Roles(Role.REGIONAL_MANAGER)
   generateReturnPin(@Request() req: any, @Body() dto: GenerateReturnPinDto) {
-    return this.service.generateReturnPin(req.user.userId, dto.assignmentId);
+    return this.service.generateReturnPin(
+      req.user.userId,
+      dto.assignmentId,
+      dto.reviewNote,
+    );
   }
 
   @Get('returns')
@@ -134,10 +139,12 @@ export class DeliveryAssignmentsController {
   requestWarehouseReturnPin(
     @Request() req: any,
     @Param('assignmentId') assignmentId: string,
+    @Body() dto: RequestEndRouteReviewDto,
   ) {
     return this.service.requestWarehouseReturnPin(
       req.user.userId,
       assignmentId,
+      dto,
     );
   }
 
