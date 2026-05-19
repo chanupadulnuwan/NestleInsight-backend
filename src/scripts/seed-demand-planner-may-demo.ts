@@ -352,6 +352,17 @@ async function cleanupSeedData(manager: EntityManager) {
   );
   const seedUserIds = seedUsers.map((row: { id: string }) => row.id);
 
+  const seedVehicles = await manager.query(
+    `
+      SELECT id
+      FROM vehicles
+      WHERE vehicle_code LIKE $1
+         OR registration_number LIKE $1
+    `,
+    [`MAY26-DEMO-%`],
+  );
+  const seedVehicleIds = seedVehicles.map((row: { id: string }) => row.id);
+
   const seedOutlets = await manager.query(
     `
       SELECT id
@@ -547,9 +558,179 @@ async function cleanupSeedData(manager: EntityManager) {
   if (seedOutletIds.length > 0) {
     await manager.query(`DELETE FROM outlets WHERE id = ANY($1::uuid[])`, [seedOutletIds]);
   }
+  if (seedVehicleIds.length > 0) {
+    await manager.query(`DELETE FROM vehicles WHERE id = ANY($1::uuid[])`, [seedVehicleIds]);
+  }
   if (seedUserIds.length > 0) {
     await manager.query(`DELETE FROM users WHERE id = ANY($1::uuid[])`, [seedUserIds]);
   }
+}
+
+function seededIdentity(label: string) {
+  const token = randomUUID().replace(/-/g, '').slice(0, 8).toLowerCase();
+  const username = `${SEED_USERNAME_PREFIX}${label}_${token}`;
+  const numeric = randomUUID().replace(/\D/g, '').slice(0, 8).padEnd(8, '0');
+  return {
+    token,
+    username,
+    email: `${username}${SEED_EMAIL_DOMAIN}`,
+    phoneNumber: `07${numeric}`,
+  };
+}
+
+async function findWarehouseForTerritory(
+  manager: EntityManager,
+  territory: Territory,
+) {
+  const repo = manager.getRepository(Warehouse);
+  const preferredById = await repo.findOne({
+    where: { id: '32cf3b49-aa38-4f68-ab06-24dd05407744' },
+    relations: { territory: true, managerUser: true },
+  });
+  if (preferredById) {
+    return preferredById;
+  }
+
+  const territoryWarehouses = await repo.find({
+    where: { territoryId: territory.id },
+    relations: { territory: true, managerUser: true },
+  });
+  const preferredByName = territoryWarehouses.find((warehouse) =>
+    warehouse.name.toLowerCase().includes('kalegana'),
+  );
+  return preferredByName ?? territoryWarehouses[0] ?? null;
+}
+
+async function findExistingUserByPreference(
+  manager: EntityManager,
+  options: {
+    preferredUsername?: string;
+    role: Role;
+    territoryId?: string | null;
+    warehouseId?: string | null;
+  },
+) {
+  const repo = manager.getRepository(User);
+  if (options.preferredUsername) {
+    const preferred = await repo.findOne({
+      where: { username: options.preferredUsername },
+    });
+    if (preferred) {
+      return preferred;
+    }
+  }
+
+  const candidates = await repo.find({
+    where: {
+      role: options.role,
+    },
+    order: {
+      createdAt: 'ASC',
+    },
+  });
+
+  return (
+    candidates.find(
+      (user) =>
+        (!options.warehouseId || user.warehouseId === options.warehouseId) &&
+        (!options.territoryId || user.territoryId === options.territoryId),
+    ) ??
+    candidates.find((user) => !options.territoryId || user.territoryId === options.territoryId) ??
+    candidates[0] ??
+    null
+  );
+}
+
+async function createOperatorUser(
+  manager: EntityManager,
+  options: {
+    role: Role;
+    label: string;
+    firstName: string;
+    lastName: string;
+    platformAccess: Platform;
+    territory: Territory;
+    warehouse: Warehouse;
+    passwordHash: string;
+  },
+) {
+  const identity = seededIdentity(options.label);
+  const publicCodePrefix =
+    options.role === Role.REGIONAL_MANAGER
+      ? 'RM'
+      : options.role === Role.TERRITORY_DISTRIBUTOR
+        ? 'TD'
+        : 'SR';
+  const user = manager.getRepository(User).create({
+    id: randomUUID(),
+    publicUserCode: `${publicCodePrefix}-MAY26-${identity.token.toUpperCase()}`,
+    firstName: options.firstName,
+    lastName: options.lastName,
+    username: identity.username,
+    email: identity.email,
+    phoneNumber: identity.phoneNumber,
+    passwordHash: options.passwordHash,
+    employeeId: null,
+    nic: null,
+    shopName: null,
+    address: options.warehouse.address,
+    warehouseName: options.warehouse.name,
+    territoryId: options.territory.id,
+    warehouseId: options.warehouse.id,
+    latitude: options.warehouse.latitude,
+    longitude: options.warehouse.longitude,
+    role: options.role,
+    platformAccess: options.platformAccess,
+    accountStatus: AccountStatus.ACTIVE,
+    approvalStatus: ApprovalStatus.APPROVED,
+    approvedBy: 'seed-script',
+    approvedAt: atUtc('2026-04-28', 6, 0),
+    rejectionReason: null,
+    isEmailVerified: true,
+    otpCodeHash: null,
+    otpExpiresAt: null,
+    otpLastSentAt: null,
+    otpVerifiedAt: atUtc('2026-04-28', 6, 0),
+  });
+  return manager.getRepository(User).save(user);
+}
+
+async function findOrCreateVehicle(
+  manager: EntityManager,
+  territory: Territory,
+  warehouse: Warehouse,
+) {
+  const repo = manager.getRepository(Vehicle);
+  const preferred = await repo.findOne({
+    where: { vehicleCode: 'LOV-5678' },
+  });
+  if (preferred) {
+    return preferred;
+  }
+
+  const vehicles = await repo.find({
+    where: { territoryId: territory.id },
+    order: { createdAt: 'ASC' },
+  });
+  const matchingWarehouseVehicle =
+    vehicles.find((vehicle) => vehicle.warehouseId === warehouse.id) ?? vehicles[0] ?? null;
+  if (matchingWarehouseVehicle) {
+    return matchingWarehouseVehicle;
+  }
+
+  const token = randomUUID().replace(/-/g, '').slice(0, 6).toUpperCase();
+  const vehicle = repo.create({
+    id: randomUUID(),
+    territoryId: territory.id,
+    warehouseId: warehouse.id,
+    vehicleCode: `MAY26-DEMO-${token}`,
+    registrationNumber: `MAY26-DEMO-${token}`,
+    label: `${warehouse.name} Demo Van`,
+    type: 'VAN',
+    capacityCases: 480,
+    status: 'ACTIVE',
+  });
+  return repo.save(vehicle);
 }
 
 function buildOrderQuantityCases(
@@ -608,32 +789,95 @@ async function seedMayDemandScenario(
     'Galle A territory is missing.',
   );
   const warehouse = ensure(
-    await manager.getRepository(Warehouse).findOne({
-      where: { id: '32cf3b49-aa38-4f68-ab06-24dd05407744' },
-      relations: { territory: true },
-    }),
-    'Galle warehouse is missing.',
+    await findWarehouseForTerritory(manager, territory),
+    'A warehouse for Galle A is missing.',
   );
-  const distributor = ensure(
-    await manager.getRepository(User).findOne({ where: { username: 'rajivx' } }),
-    'Distributor rajivx is missing.',
-  );
-  const territoryManager = ensure(
-    await manager.getRepository(User).findOne({ where: { username: 'TMgag' } }),
-    'Territory manager TMgag is missing.',
-  );
-  const salesRepPrimary = ensure(
-    await manager.getRepository(User).findOne({ where: { username: 'dulanjana' } }),
-    'Sales rep dulanjana is missing.',
-  );
-  const salesRepSecondary = ensure(
-    await manager.getRepository(User).findOne({ where: { username: 'mahi' } }),
-    'Sales rep mahi is missing.',
-  );
-  const vehicle = ensure(
-    await manager.getRepository(Vehicle).findOne({ where: { vehicleCode: 'LOV-5678' } }),
-    'Galle distributor vehicle LOV-5678 is missing.',
-  );
+  const passwordHash = await bcrypt.hash('Insight@123', 10);
+  const territoryManager =
+    (await findExistingUserByPreference(manager, {
+      preferredUsername: 'TMgag',
+      role: Role.REGIONAL_MANAGER,
+      territoryId: territory.id,
+      warehouseId: warehouse.id,
+    })) ??
+    (warehouse.managerUser &&
+    [Role.REGIONAL_MANAGER, Role.TERRITORY_DISTRIBUTOR].includes(
+      warehouse.managerUser.role,
+    )
+      ? warehouse.managerUser
+      : null) ??
+    (await createOperatorUser(manager, {
+      role: Role.REGIONAL_MANAGER,
+      label: 'tm',
+      firstName: 'Galle',
+      lastName: 'Manager',
+      platformAccess: Platform.WEB,
+      territory,
+      warehouse,
+      passwordHash,
+    }));
+  const distributor =
+    (await findExistingUserByPreference(manager, {
+      preferredUsername: 'rajivx',
+      role: Role.TERRITORY_DISTRIBUTOR,
+      territoryId: territory.id,
+      warehouseId: warehouse.id,
+    })) ??
+    (await createOperatorUser(manager, {
+      role: Role.TERRITORY_DISTRIBUTOR,
+      label: 'dist',
+      firstName: 'Galle',
+      lastName: 'Distributor',
+      platformAccess: Platform.MOBILE,
+      territory,
+      warehouse,
+      passwordHash,
+    }));
+  const salesRepPool = await manager.getRepository(User).find({
+    where: {
+      role: Role.SALES_REP,
+      territoryId: territory.id,
+    },
+    order: {
+      createdAt: 'ASC',
+    },
+  });
+  const preferredPrimary =
+    salesRepPool.find((user) => user.username === 'dulanjana') ??
+    salesRepPool.find((user) => user.warehouseId === warehouse.id) ??
+    salesRepPool[0] ??
+    null;
+  const salesRepPrimary =
+    preferredPrimary ??
+    (await createOperatorUser(manager, {
+      role: Role.SALES_REP,
+      label: 'sr1',
+      firstName: 'Galle',
+      lastName: 'Salesrep One',
+      platformAccess: Platform.MOBILE,
+      territory,
+      warehouse,
+      passwordHash,
+    }));
+  const preferredSecondary =
+    salesRepPool.find(
+      (user) => user.username === 'mahi' && user.id !== salesRepPrimary.id,
+    ) ??
+    salesRepPool.find((user) => user.id !== salesRepPrimary.id) ??
+    null;
+  const salesRepSecondary =
+    preferredSecondary ??
+    (await createOperatorUser(manager, {
+      role: Role.SALES_REP,
+      label: 'sr2',
+      firstName: 'Galle',
+      lastName: 'Salesrep Two',
+      platformAccess: Platform.MOBILE,
+      territory,
+      warehouse,
+      passwordHash,
+    }));
+  const vehicle = await findOrCreateVehicle(manager, territory, warehouse);
 
   const products = await manager.getRepository(Product).find({
     where: PRODUCT_DEFINITIONS.map((definition) => ({ sku: definition.sku })),
@@ -660,7 +904,6 @@ async function seedMayDemandScenario(
     };
   }
 
-  const passwordHash = await bcrypt.hash('Insight@123', 10);
   const approvedAt = atUtc('2026-04-28', 6, 0);
   const shopContexts: ShopContext[] = SHOP_DEFINITIONS.map((shop, index) => ({
     ...shop,
