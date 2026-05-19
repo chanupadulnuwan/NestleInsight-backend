@@ -931,6 +931,11 @@ export class ExportsService {
         const unitsPerCase = productId
           ? this.getUnitsPerCase(productId, productById)
           : null;
+        const quantityCases = this.readNumber(expiryRecord.quantityCases);
+        const quantityUnits =
+          this.readNumber(expiryRecord.quantityUnits) ||
+          quantityCases * (unitsPerCase ?? 1);
+        const hasExplicitQuantity = quantityUnits > 0 || quantityCases > 0;
 
         damageExpiredRows.push({
           loss_event_id: `expiry:${visit.id}:${productId ?? 'unknown'}`,
@@ -940,14 +945,20 @@ export class ExportsService {
           product_name:
             expiryRecord.productName?.toString() ?? 'Unknown Product',
           loss_type: 'EXPIRED',
-          quantity_units: 0,
-          quantity_cases: 0,
+          quantity_units: this.roundNumber(quantityUnits),
+          quantity_cases: this.roundNumber(
+            unitsPerCase && unitsPerCase > 0
+              ? quantityUnits / unitsPerCase
+              : quantityCases,
+          ),
           units_per_case: unitsPerCase,
           observed_at: observedAtIso,
           observed_date: observedDate,
           notes: expiryRecord.notes?.toString() ?? '',
-          count_source: 'BOOLEAN_FLAG_ONLY',
-          data_quality_flags: 'NO_EXPLICIT_EXPIRED_QUANTITY',
+          count_source: hasExplicitQuantity ? 'VISIT_QUANTITY' : 'BOOLEAN_FLAG_ONLY',
+          data_quality_flags: hasExplicitQuantity
+            ? ''
+            : 'NO_EXPLICIT_EXPIRED_QUANTITY',
         });
       }
 
@@ -971,6 +982,11 @@ export class ExportsService {
         const unitsPerCase = resolvedProductId
           ? this.getUnitsPerCase(resolvedProductId, productById)
           : null;
+        const quantityCases = this.readNumber(issueRecord.quantityCases);
+        const quantityUnits =
+          this.readNumber(issueRecord.quantityUnits) ||
+          quantityCases * (unitsPerCase ?? 1);
+        const hasExplicitQuantity = quantityUnits > 0 || quantityCases > 0;
 
         damageExpiredRows.push({
           loss_event_id: `damage:${visit.id}:${resolvedProductId ?? 'unknown'}`,
@@ -979,14 +995,20 @@ export class ExportsService {
           product_id: resolvedProductId,
           product_name: productNames[0] ?? 'Unknown Product',
           loss_type: 'DAMAGED',
-          quantity_units: 0,
-          quantity_cases: 0,
+          quantity_units: this.roundNumber(quantityUnits),
+          quantity_cases: this.roundNumber(
+            unitsPerCase && unitsPerCase > 0
+              ? quantityUnits / unitsPerCase
+              : quantityCases,
+          ),
           units_per_case: unitsPerCase,
           observed_at: observedAtIso,
           observed_date: observedDate,
           notes: issueRecord.notes?.toString() ?? '',
-          count_source: 'OSA_ISSUE_ONLY',
-          data_quality_flags: 'NO_EXPLICIT_DAMAGE_QUANTITY',
+          count_source: hasExplicitQuantity ? 'OSA_DAMAGE_QUANTITY' : 'OSA_ISSUE_ONLY',
+          data_quality_flags: hasExplicitQuantity
+            ? ''
+            : 'NO_EXPLICIT_DAMAGE_QUANTITY',
         });
       }
     }
