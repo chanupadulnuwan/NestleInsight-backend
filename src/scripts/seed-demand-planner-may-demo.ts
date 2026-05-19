@@ -1903,18 +1903,46 @@ async function seedMayDemandScenario(
   );
   await manager.insert(ActivityLog, activityLogs);
 
+  const demoLowStockByProductId = new Map(
+    PRODUCT_DEFINITIONS.map((definition, index) => [
+      selectedProducts[definition.key].id,
+      {
+        quantityOnHand: [1, 2, 2, 1, 1, 1][index],
+        reorderLevel: [8, 10, 10, 7, 7, 7][index],
+        maxCapacityCases: [60, 58, 70, 52, 50, 48][index],
+      },
+    ]),
+  );
+
   const inventoryUpserts = PRODUCT_DEFINITIONS.map((definition, index) => ({
     id: randomUUID(),
     warehouseId: warehouse.id,
     productId: selectedProducts[definition.key].id,
-    quantityOnHand: [18, 22, 31, 16, 24, 19][index],
-    reorderLevel: [14, 16, 18, 12, 12, 11][index],
+    quantityOnHand: [1, 2, 2, 1, 1, 1][index],
+    reorderLevel: [8, 10, 10, 7, 7, 7][index],
     maxCapacityCases: [60, 58, 70, 52, 50, 48][index],
     createdAt: atUtc('2026-04-20', 5, 0),
     updatedAt: atUtc('2026-05-18', 12, 0),
   }));
 
   const inventoryRepo = manager.getRepository(WarehouseInventoryItem);
+  const allProductInventoryRows = await inventoryRepo.find({
+    where: PRODUCT_DEFINITIONS.map((definition) => ({
+      productId: selectedProducts[definition.key].id,
+    })),
+  });
+  for (const existing of allProductInventoryRows) {
+    const target = demoLowStockByProductId.get(existing.productId);
+    if (!target) {
+      continue;
+    }
+    await inventoryRepo.update(existing.id, {
+      quantityOnHand: target.quantityOnHand,
+      reorderLevel: target.reorderLevel,
+      maxCapacityCases: target.maxCapacityCases,
+      updatedAt: atUtc('2026-05-18', 12, 0),
+    });
+  }
   for (const item of inventoryUpserts) {
     const existing = await inventoryRepo.findOne({
       where: { warehouseId: item.warehouseId, productId: item.productId },
@@ -2010,6 +2038,16 @@ async function verifyScenario(
     baselineForecast.forecastOutput.map((row) => safeNumber(row.forecast_cases)),
   );
   const forecastDifference = roundNumber(mayForecastTotal - baselineForecastTotal);
+  const recommendedBuildCases = sum(
+    mayForecast.productionRecommendations.map((row) =>
+      safeNumber(row.recommended_production_cases),
+    ),
+  );
+  const recommendedDailyBuildCases = sum(
+    mayForecast.productionRecommendations.map((row) =>
+      safeNumber(row.suggested_daily_manufacture_cases),
+    ),
+  );
 
   const seededOrdersInDb = await dataSource.getRepository(Order).count({
     where: {
@@ -2094,6 +2132,11 @@ async function verifyScenario(
       `Forecast difference is too small for the intended high-demand story: ${forecastDifference} cases.`,
     );
   }
+  if (recommendedBuildCases <= 0 || recommendedDailyBuildCases <= 0) {
+    throw new Error(
+      `Forecast planner still suggests no manufacture. Recommended build ${recommendedBuildCases} cases, daily pace ${recommendedDailyBuildCases} cases.`,
+    );
+  }
   if (!Array.isArray(insightDashboard.charts?.trend) || insightDashboard.charts.trend.length === 0) {
     throw new Error('Insight Center trend chart is empty for the seeded window.');
   }
@@ -2168,6 +2211,8 @@ async function verifyScenario(
           mayForecastTotalCases: mayForecastTotal,
           baselineForecastTotalCases: baselineForecastTotal,
           forecastDifferenceCases: forecastDifference,
+          recommendedBuildCases,
+          recommendedDailyBuildCases,
           warehousePeakOrderCases: peakOrderCases,
           insightKpis,
           insightTrendBuckets: insightDashboard.charts.trend.length,
