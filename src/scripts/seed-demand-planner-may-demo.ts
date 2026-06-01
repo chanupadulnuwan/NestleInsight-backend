@@ -2204,26 +2204,42 @@ async function seedMayDemandScenario(
   await manager.insert(ActivityLog, activityLogs);
 
   const demoLowStockByProductId = new Map(
-    PRODUCT_DEFINITIONS.map((definition, index) => [
-      selectedProducts[definition.key].id,
-      {
-        quantityOnHand: (definition.key === 'coffee' || definition.key === 'milo') ? 500 : 100,
-        reorderLevel: [8, 10, 10, 7, 7, 7][index],
-        maxCapacityCases: [600, 580, 700, 520, 500, 480][index],
-      },
-    ]),
+    PRODUCT_DEFINITIONS.map((definition, index) => {
+      let q = 1;
+      if (definition.key === 'coffee') q = 55;
+      else if (definition.key === 'milo') q = 52;
+      else if (definition.key === 'maggi') q = 2;
+      else q = 1;
+
+      return [
+        selectedProducts[definition.key].id,
+        {
+          quantityOnHand: q,
+          reorderLevel: [8, 10, 10, 7, 7, 7][index],
+          maxCapacityCases: [60, 58, 70, 52, 50, 48][index],
+        },
+      ];
+    }),
   );
 
-  const inventoryUpserts = PRODUCT_DEFINITIONS.map((definition, index) => ({
-    id: randomUUID(),
-    warehouseId: warehouse.id,
-    productId: selectedProducts[definition.key].id,
-    quantityOnHand: (definition.key === 'coffee' || definition.key === 'milo') ? 500 : 100,
-    reorderLevel: [8, 10, 10, 7, 7, 7][index],
-    maxCapacityCases: [600, 580, 700, 520, 500, 480][index],
-    createdAt: atUtc('2026-04-20', 5, 0),
-    updatedAt: atUtc('2026-06-01', 12, 0),
-  }));
+  const inventoryUpserts = PRODUCT_DEFINITIONS.map((definition, index) => {
+    let q = 1;
+    if (definition.key === 'coffee') q = 55;
+    else if (definition.key === 'milo') q = 52;
+    else if (definition.key === 'maggi') q = 2;
+    else q = 1;
+
+    return {
+      id: randomUUID(),
+      warehouseId: warehouse.id,
+      productId: selectedProducts[definition.key].id,
+      quantityOnHand: q,
+      reorderLevel: [8, 10, 10, 7, 7, 7][index],
+      maxCapacityCases: [60, 58, 70, 52, 50, 48][index],
+      createdAt: atUtc('2026-04-20', 5, 0),
+      updatedAt: atUtc('2026-06-01', 12, 0),
+    };
+  });
 
   const inventoryRepo = manager.getRepository(WarehouseInventoryItem);
   const allProductInventoryRows = await inventoryRepo.find({
@@ -2434,8 +2450,8 @@ async function verifyScenario(
     );
   }
   if (recommendedBuildCases <= 0 || recommendedDailyBuildCases <= 0) {
-    console.warn(
-      `[Warning] Forecast planner suggests no manufacture. Recommended build ${recommendedBuildCases} cases, daily pace ${recommendedDailyBuildCases} cases. This is expected due to seeded high safety stock.`,
+    throw new Error(
+      `Forecast planner still suggests no manufacture. Recommended build ${recommendedBuildCases} cases, daily pace ${recommendedDailyBuildCases} cases.`,
     );
   }
   if (!Array.isArray(insightDashboard.charts?.trend) || insightDashboard.charts.trend.length === 0) {
