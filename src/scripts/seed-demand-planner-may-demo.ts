@@ -186,19 +186,49 @@ async function seedMayDemandScenario(
   const colomboBTerritory = ensure(await territoryRepo.findOneBy({ name: 'Colombo B' }), 'Colombo B territory missing.');
 
   // 2. Load existing warehouses
-  const galleWarehouse = ensure(await warehouseRepo.findOneBy({ name: 'kalegana store' }), 'Galle A Warehouse missing.');
-  const colomboAWarehouse = ensure(await warehouseRepo.findOneBy({ name: 'Colombo A Main Warehouse' }), 'Colombo A Warehouse missing.');
-  const colomboBWarehouse = ensure(await warehouseRepo.findOneBy({ name: 'Colombo B South Depot' }), 'Colombo B Warehouse missing.');
+  let galleWarehouse = await warehouseRepo.findOneBy({ name: 'kalegana store' })
+    || await warehouseRepo.findOneBy({ territoryId: galleTerritory.id })
+    || await warehouseRepo.findOne({ where: {} });
+  let colomboAWarehouse = await warehouseRepo.findOneBy({ name: 'Colombo A Main Warehouse' })
+    || await warehouseRepo.findOneBy({ territoryId: colomboATerritory.id })
+    || await warehouseRepo.findOne({ where: {} });
+  let colomboBWarehouse = await warehouseRepo.findOneBy({ name: 'Colombo B South Depot' })
+    || await warehouseRepo.findOneBy({ territoryId: colomboBTerritory.id })
+    || await warehouseRepo.findOne({ where: {} });
+
+  galleWarehouse = ensure(galleWarehouse, 'Galle A Warehouse missing.');
+  colomboAWarehouse = ensure(colomboAWarehouse, 'Colombo A Warehouse missing.');
+  colomboBWarehouse = ensure(colomboBWarehouse, 'Colombo B Warehouse missing.');
 
   // 3. Load existing distributors
-  const galleDist = ensure(await userRepo.findOneBy({ username: 'rajivx' }), 'Galle Distributor missing.');
-  const colomboADist = ensure(await userRepo.findOneBy({ username: 'colombo_a_distributor' }), 'Colombo A Distributor missing.');
-  const colomboBDist = ensure(await userRepo.findOneBy({ username: 'colombo_b_distributor' }), 'Colombo B Distributor missing.');
+  let galleDist = await userRepo.findOneBy({ username: 'rajivx' })
+    || await userRepo.findOneBy({ role: Role.TERRITORY_DISTRIBUTOR, territoryId: galleTerritory.id })
+    || await userRepo.findOneBy({ role: Role.TERRITORY_DISTRIBUTOR });
+  let colomboADist = await userRepo.findOneBy({ username: 'colombo_a_distributor' })
+    || await userRepo.findOneBy({ role: Role.TERRITORY_DISTRIBUTOR, territoryId: colomboATerritory.id })
+    || await userRepo.findOneBy({ role: Role.TERRITORY_DISTRIBUTOR });
+  let colomboBDist = await userRepo.findOneBy({ username: 'colombo_b_distributor' })
+    || await userRepo.findOneBy({ role: Role.TERRITORY_DISTRIBUTOR, territoryId: colomboBTerritory.id })
+    || await userRepo.findOneBy({ role: Role.TERRITORY_DISTRIBUTOR });
+
+  galleDist = ensure(galleDist, 'Galle Distributor missing.');
+  colomboADist = ensure(colomboADist, 'Colombo A Distributor missing.');
+  colomboBDist = ensure(colomboBDist, 'Colombo B Distributor missing.');
 
   // 4. Load existing regional managers
-  const galleMgr = ensure(await userRepo.findOneBy({ username: 'TMgag' }), 'Galle Regional Manager missing.');
-  const colomboAMgr = ensure(await userRepo.findOneBy({ username: 'colombo_a_manager' }), 'Colombo A Regional Manager missing.');
-  const colomboBMgr = ensure(await userRepo.findOneBy({ username: 'colombo_b_manager' }), 'Colombo B Regional Manager missing.');
+  let galleMgr = await userRepo.findOneBy({ username: 'TMgag' })
+    || await userRepo.findOneBy({ role: Role.REGIONAL_MANAGER, territoryId: galleTerritory.id })
+    || await userRepo.findOneBy({ role: Role.REGIONAL_MANAGER });
+  let colomboAMgr = await userRepo.findOneBy({ username: 'colombo_a_manager' })
+    || await userRepo.findOneBy({ role: Role.REGIONAL_MANAGER, territoryId: colomboATerritory.id })
+    || await userRepo.findOneBy({ role: Role.REGIONAL_MANAGER });
+  let colomboBMgr = await userRepo.findOneBy({ username: 'colombo_b_manager' })
+    || await userRepo.findOneBy({ role: Role.REGIONAL_MANAGER, territoryId: colomboBTerritory.id })
+    || await userRepo.findOneBy({ role: Role.REGIONAL_MANAGER });
+
+  galleMgr = ensure(galleMgr, 'Galle Regional Manager missing.');
+  colomboAMgr = ensure(colomboAMgr, 'Colombo A Regional Manager missing.');
+  colomboBMgr = ensure(colomboBMgr, 'Colombo B Regional Manager missing.');
 
   // 5. Ensure all existing SHOP_OWNER users have registered Outlet records
   const allShopOwners = await userRepo.find({
