@@ -411,7 +411,7 @@ async function seedForecastPeriodDemo(manager: EntityManager) {
               quantityCases: sp.backroomUnits / p.unitsPerCase,
             };
           }),
-          osaIssuesJson:   isPeriod1 ? [{ issue: 'Low safety stock for surge products', severity: 'HIGH' }] : [],
+          osaIssuesJson:   isPeriod1 ? [{ productId: products.find(p => p.isSurge)?.id ?? '', issueType: 'LOW_STOCK', notes: 'Low safety stock for surge products' }] : [],
           promotionsJson:  [],
           planogramOk:     true,
           posmOk:          true,
