@@ -10,6 +10,8 @@
     "db:init": "node scripts/db-init.js",
     "seed:demand-demo": "node dist/scripts/seed-demand-planner-may-demo.js",
     "seed:demand-demo:dev": "ts-node -r tsconfig-paths/register src/scripts/seed-demand-planner-may-demo.ts",
+    "seed:forecast-demo": "node dist/scripts/seed-forecast-period-demo.js",
+    "seed:forecast-demo:dev": "ts-node -r tsconfig-paths/register src/scripts/seed-forecast-period-demo.ts",
     "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
