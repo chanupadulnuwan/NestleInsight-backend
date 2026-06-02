@@ -213,9 +213,9 @@ async function seedForecastPeriodDemo(manager: EntityManager) {
 
   // ── 6. Per-territory configs ─────────────────────────────────────────────────
   const territoryConfigs = [
-    { territory: galleTerritory,    warehouse: galleWarehouse,    distributor: galleDist,    manager: galleMgr },
-    { territory: colomboATerritory, warehouse: colomboAWarehouse, distributor: colomboADist, manager: colomboAMgr },
-    { territory: colomboBTerritory, warehouse: colomboBWarehouse, distributor: colomboBDist, manager: colomboBMgr },
+    { territory: galleTerritory,    warehouse: galleWarehouse,    distributor: galleDist,    tm: galleMgr },
+    { territory: colomboATerritory, warehouse: colomboAWarehouse, distributor: colomboADist, tm: colomboAMgr },
+    { territory: colomboBTerritory, warehouse: colomboBWarehouse, distributor: colomboBDist, tm: colomboBMgr },
   ];
 
   const allDates = [...PERIOD_1_DATES, ...PERIOD_2_DATES];
@@ -226,12 +226,12 @@ async function seedForecastPeriodDemo(manager: EntityManager) {
     const isPeriod1 = PERIOD_1_DATES.includes(date);
 
     for (const cfg of territoryConfigs) {
-      const { territory, warehouse, distributor, manager } = cfg;
+      const { territory, warehouse, distributor, tm } = cfg;
 
       // Delivery Assignment
       const assignment = manager.getRepository(DeliveryAssignment).create({
         id: randomUUID(),
-        territoryManagerId: manager.id,
+        territoryManagerId: tm.id,
         distributorId:      distributor.id,
         vehicleId:          null,
         deliveryDate:       date,
@@ -345,7 +345,7 @@ async function seedForecastPeriodDemo(manager: EntityManager) {
           currencyCode:      'LKR',
           totalAmount:       orderTotal,
           placedAt:          atUtc(date, 9, 30 + idx * 5),
-          approvedBy:        manager.id,
+          approvedBy:        tm.id,
           approvedAt:        atUtc(date, 10, 0),
           customerNote:      `[${SEED_TAG}] ${isPeriod1 ? 'Period-1 surge replenishment order.' : 'Period-2 standard replenishment order.'}`,
           assignmentId:      assignment.id,
