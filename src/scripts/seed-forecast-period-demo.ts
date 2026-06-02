@@ -334,7 +334,7 @@ async function seedForecastPeriodDemo(manager: EntityManager) {
 
         const order = manager.getRepository(Order).create({
           id:                orderId,
-          orderCode:         `ORD-${territory.name.replace(/\s+/g, '')}-${date.replace(/-/g, '')}-${idx + 1}`,
+          orderCode:         `ORD-FPD-${territory.name.replace(/\s+/g, '')}-${date.replace(/-/g, '')}-${idx + 1}`,
           userId:            ownerUser?.id,
           shopNameSnapshot:  outlet.outletName,
           territoryId:       territory.id,
