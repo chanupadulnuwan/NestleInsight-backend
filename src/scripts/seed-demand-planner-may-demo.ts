@@ -541,9 +541,9 @@ async function seedMayDemandScenario(
 
       if (existing) {
         await inventoryRepo.update(existing.id, {
-          quantityOnHand: 600,
+          quantityOnHand: 12000,
           reorderLevel: 10,
-          maxCapacityCases: 700,
+          maxCapacityCases: 15000,
           updatedAt: atUtc('2026-06-01', 12, 0),
         });
       } else {
@@ -551,9 +551,9 @@ async function seedMayDemandScenario(
           id: randomUUID(),
           warehouseId: wh.id,
           productId: p.id,
-          quantityOnHand: 600,
+          quantityOnHand: 12000,
           reorderLevel: 10,
-          maxCapacityCases: 700,
+          maxCapacityCases: 15000,
           createdAt: atUtc('2026-04-20', 5, 0),
           updatedAt: atUtc('2026-06-01', 12, 0),
         });
