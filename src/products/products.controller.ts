@@ -26,12 +26,16 @@ type UploadedProductImage = {
 };
 
 @Controller('products')
-@UseGuards(JwtAuthGuard, RolesGuard)
-@Roles(Role.ADMIN)
 export class ProductsController {
   constructor(private readonly productsService: ProductsService) {}
 
+  @Get('public')
+  listPublicProducts() {
+    return this.productsService.listActiveProductCatalog();
+  }
+
   @Get('catalog')
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(
     Role.ADMIN,
     Role.SHOP_OWNER,
@@ -43,12 +47,15 @@ export class ProductsController {
   }
 
   @Get()
+  @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.DEMAND_PLANNER)
   listProducts() {
     return this.productsService.listProducts();
   }
 
   @Get('sku-availability')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
   checkSkuAvailability(
     @Query('sku') sku: string,
     @Query('excludeProductId') excludeProductId?: string,
@@ -57,6 +64,8 @@ export class ProductsController {
   }
 
   @Post()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
   @UseInterceptors(FileInterceptor('image', createProductImageUploadOptions()))
   createProduct(
     @Body() createProductDto: CreateProductDto,
@@ -66,6 +75,8 @@ export class ProductsController {
   }
 
   @Patch(':id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
   @UseInterceptors(FileInterceptor('image', createProductImageUploadOptions()))
   updateProduct(
     @Param('id') id: string,
