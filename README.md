@@ -1,107 +1,112 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# NestleInsight - B2B Distribution & Sales Management Platform
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+NestleInsight is a B2B distribution and sales monitoring platform tailored for managing wholesale products, tracking field territory performance, fulfilling retailer orders, and forecasting demand.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+The project is structured into three main components:
+1. **`backend/`** — A robust NestJS REST API using TypeScript, PostgreSQL (TypeORM), and JWT security roles.
+2. **`web/`** — A React admin portal built with Vite, Tailwind CSS (v4), and Material UI (MUI).
+3. **`mobile/`** — A mobile application for retailers/shop owners developed in Flutter.
 
-## Description
+---
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## 📂 Repository Structure
 
-## Project setup
-
-```bash
-$ npm install
+```
+NestleInsight/
+├── backend/                   # NestJS REST API (Server Application)
+│   ├── src/
+│   │   ├── auth/              # JWT Auth, OTP verification, Guards & Roles decorators
+│   │   ├── products/          # Catalog management & public/private endpoints
+│   │   ├── categories/        # Product categories & groupings
+│   │   ├── database/          # PostgreSQL entity definitions & catalog seeds
+│   │   └── uploads/           # Uploaded assets (e.g. product image files)
+│   └── scripts/               # DB init and demographic seed scripts
+├── web/                       # React & Vite Admin Portal (Web client)
+│   ├── src/
+│   │   ├── api/               # API clients (Axios connection helpers)
+│   │   ├── components/        # Reusable components (Navbar, Footer, Modal)
+│   │   ├── pages/             # Portal pages (AdminDashboard, PublicProductsPage, etc.)
+│   │   └── index.css          # Global Tailwind CSS and Glassmorphic variables
+│   └── public/                # Static assets (favicons, illustration images)
+└── mobile/                    # Flutter Mobile App for Shop Owners
 ```
 
-## Database setup
+---
 
-For a fresh PostgreSQL database, initialize the current schema and seed the
-built-in product catalog with:
+## 🎨 Styling Design System (`web/src/index.css`)
 
-```bash
-$ npm run db:init
-```
+The web admin panel is designed with a premium, glassmorphic dark-and-light aesthetic. Key variables and design tokens defined in [index.css](file:///d:/NestleInsight/web/src/index.css) include:
 
-## Compile and run the project
+### 1. Color Palette & Typography
+* **Corporate Palette**:
+  * Primary Sans Font: `Aptos`, `Segoe UI`, `Trebuchet MS`
+  * Theme Colors:
+    * `--color-insight-gold` (`#c97935`) - Amber/gold accents
+    * `--color-insight-amber` (`#efb068`) - Warning/highlight tones
+    * `--color-insight-sand` (`#f6e5d5`) - Warm container background
+    * `--color-insight-950` (`#120704`) - Sleek, dark brown backgrounds
+* **Hero Remake Overlay (`.hero-shell`)**:
+  Combines linear gradients and the background art (`/images/hero-background.jpg`) with radial warm glowing filters (`.hero-ambient`).
 
-```bash
-# development
-$ npm run start
+### 2. Custom Keyframe Animations
+* `riseFade`: Smooth upward entrance for cards and header texts.
+* `floatDrift`: Slow, floating hover animation for background panels.
+* `dustDrift`: Ambient dust particle simulator for rich depth.
+* `headlineGlow`: Ambient glow effect for primary typographic headers.
+* `missionLineDrift`: Flowing, colored graphic lines illustrating visual metrics.
 
-# watch mode
-$ npm run start:dev
+---
 
-# production mode
-$ npm run start:prod
-```
+## 🔌 Backend API & Authentication Routing
 
-## Run tests
+Every API endpoint is secure by default using a Passport JWT auth strategy combined with standard Role-Based Access Control (RBAC). 
 
-```bash
-# unit tests
-$ npm run test
+### 🛡️ Guards & Roles
+* **Authentication**: Enforced via `@UseGuards(JwtAuthGuard, RolesGuard)` at endpoint level.
+* **Role Verification**: Enforced via the `@Roles(...)` metadata decorator. Roles include `ADMIN`, `REGIONAL_MANAGER`, `DISTRIBUTOR`, `SHOP_OWNER`, and `DEMAND_PLANNER`.
 
-# e2e tests
-$ npm run test:e2e
+### 📦 Products API Reference (`backend/src/products/products.controller.ts`)
 
-# test coverage
-$ npm run test:cov
-```
+| HTTP Method | Route Endpoint | Required Roles | Description |
+| :--- | :--- | :--- | :--- |
+| **GET** | `/products/public` | *None (Public)* | Lists active catalog products for public browse (e.g. Milo, Nescafe, Maggi) with real database prices & images. |
+| **GET** | `/products/catalog` | `ADMIN`, `SHOP_OWNER`, `SALES_REP`, `TERRITORY_DISTRIBUTOR` | Fetches active product list grouped by categories for logged-in operators. |
+| **GET** | `/products` | `ADMIN`, `DEMAND_PLANNER` | Lists all products in the database including active and inactive items. |
+| **GET** | `/products/sku-availability` | `ADMIN` | Verifies if a SKU code is available for a new product. |
+| **POST** | `/products` | `ADMIN` | Creates a new product and uploads its image (saves to `uploads/products/`). |
+| **PATCH** | `/products/:id` | `ADMIN` | Modifies product details and handles replacement/deletion of old image assets. |
 
-## Deployment
+---
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+## 🚀 Setup & Run Instructions
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+### 🖥️ Local Development (Running Concurrently)
+1. Navigate to the `web/` directory:
+   ```bash
+   cd web
+   ```
+2. Start both the backend (watch mode) and frontend (Vite server) concurrently:
+   ```bash
+   npm run dev
+   ```
+   *(This starts the NestJS API on port 3000 and the React site on port 5173).*
 
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
-```
+### 🌐 Hosted Production Server Deployment
+The application's backend is hosted on a DigitalOcean VM via **PM2**, and the frontend is hosted on **Vercel**.
 
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+1. **Backend Deployment (Ubuntu VM via SSH)**:
+   * Pull the latest backend changes:
+     ```bash
+     cd ~/NestleInsight-backend
+     git pull origin main
+     ```
+   * Compile the TypeScript source code:
+     ```bash
+     npm run build
+     ```
+   * Restart the PM2 daemon process to reload changes:
+     ```bash
+     pm2 restart nestle-backend --update-env
+     ```
+2. **Frontend Deployment (Vercel)**:
+   * Merging/pushing commits to the `main` branch of the `NestleInsight-AdminWeb` repository triggers Vercel's automated CI/CD pipeline to compile, bundle, and deploy the updated React build instantly.
