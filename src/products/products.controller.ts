@@ -29,11 +29,25 @@ type UploadedProductImage = {
 export class ProductsController {
   constructor(private readonly productsService: ProductsService) {}
 
+  /**
+   * GET /products/public
+   * 
+   * A completely public endpoint that lists all active products in the system.
+   * This is used by the marketing/public catalog page so guest users can browse
+   * the Nestle product selection (Milo, Nescafe, Maggi, etc.) without logging in.
+   */
   @Get('public')
   listPublicProducts() {
     return this.productsService.listActiveProductCatalog();
   }
 
+  /**
+   * GET /products/catalog
+   * 
+   * Fetches the active catalog for logged-in business users.
+   * Accessible by Admins, Shop Owners, Sales Reps, and Territory Distributors.
+   * Returns active products grouped/sorted by category.
+   */
   @Get('catalog')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(
@@ -46,6 +60,12 @@ export class ProductsController {
     return this.productsService.listActiveProductCatalog();
   }
 
+  /**
+   * GET /products
+   * 
+   * Fetches the complete list of all products in the database, including inactive ones.
+   * Restricted to Admin and Demand Planner roles for inventory tracking and system management.
+   */
   @Get()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.DEMAND_PLANNER)
@@ -53,6 +73,12 @@ export class ProductsController {
     return this.productsService.listProducts();
   }
 
+  /**
+   * GET /products/sku-availability
+   * 
+   * Checks if a proposed SKU (Stock Keeping Unit) code is available or already in use.
+   * Restricted to Admin to prevent duplicate SKUs when creating or renaming products.
+   */
   @Get('sku-availability')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN)
@@ -63,6 +89,13 @@ export class ProductsController {
     return this.productsService.checkSkuAvailability(sku, excludeProductId);
   }
 
+  /**
+   * POST /products
+   * 
+   * Creates a new product in the database.
+   * Restricted to Admin.
+   * Uses FileInterceptor to handle product image upload and save it in the system.
+   */
   @Post()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN)
@@ -74,6 +107,13 @@ export class ProductsController {
     return this.productsService.createProduct(createProductDto, imageFile);
   }
 
+  /**
+   * PATCH /products/:id
+   * 
+   * Updates an existing product's details or updates its image.
+   * Restricted to Admin.
+   * Automatically replaces and deletes the old product image from the filesystem if a new one is uploaded.
+   */
   @Patch(':id')
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN)
